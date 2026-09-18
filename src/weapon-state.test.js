@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   WEAPONS, createWeaponState, updateWeaponState, tryFire, startReload, switchWeapon,
-  spreadFor, damageFor, scopeFov, adsFov, reloadProgress, isReloading, resetWeaponState
+  spreadFor, damageFor, scopeFov, adsFov, adsSensitivityScale, reloadProgress, isReloading, resetWeaponState
 } from './weapon-state.js'
 
 const hold = { pressed: false, held: true }
@@ -130,6 +130,27 @@ test('4 倍镜按投影放大公式计算', () => {
   assert.ok(Math.abs(fov - expected) < 1e-9)
   assert.ok(adsFov(createWeaponState('sniper'), 75) < 23)
   assert.ok(adsFov(createWeaponState('smg'), 75) > 60, '冲锋枪只是轻微放大')
+})
+
+test('开镜灵敏度按 monitor-distance 缩放，狙击镜恰为 1/4', () => {
+  // scopeFov 是 tan 公式的精确反函数，故比例恒等于 1 / adsZoom
+  const scale = adsSensitivityScale(createWeaponState('sniper'), 75)
+  assert.ok(Math.abs(scale - 0.25) < 1e-9, '狙击镜应精确等于 1/4，实际 ' + scale)
+})
+
+test('冲锋枪按自身的线性 fov 缩放，约 0.846', () => {
+  const scale = adsSensitivityScale(createWeaponState('smg'), 75)
+  const expected = Math.tan((66 * Math.PI) / 360) / Math.tan((75 * Math.PI) / 360)
+  assert.ok(Math.abs(scale - expected) < 1e-9)
+  assert.ok(scale > 0.84 && scale < 0.85, '实际 ' + scale)
+})
+
+test('倍率越高转向越钝，且缩放恒在 (0, 1) 内', () => {
+  const sniper = adsSensitivityScale(createWeaponState('sniper'), 75)
+  const smg = adsSensitivityScale(createWeaponState('smg'), 75)
+  assert.ok(sniper < smg, '狙击应比冲锋枪更钝')
+  assert.ok(smg < 1, '开镜不应比不开镜更灵敏')
+  assert.ok(sniper > 0)
 })
 
 test('重开恢复两个满弹匣', () => {

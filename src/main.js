@@ -4,7 +4,7 @@ import { createWorld, PALETTE, PHYS } from './world.js'
 import { Player } from './player.js'
 import {
   createWeaponState, updateWeaponState, tryFire, switchWeapon, cycleWeapon, startReload,
-  spreadFor, damageFor, WEAPONS, adsFov, reloadProgress, isReloading, resetWeaponState
+  spreadFor, damageFor, WEAPONS, adsFov, adsSensitivityScale, reloadProgress, isReloading, resetWeaponState
 } from './weapon-state.js'
 import { Effects, resolveShot } from './combat.js'
 import { EnemyManager } from './enemies.js'
@@ -15,6 +15,7 @@ import { UI } from './ui.js'
 const STATE = { MENU: 'menu', PLAYING: 'playing', PAUSED: 'paused', VICTORY: 'victory', DEFEAT: 'defeat' }
 const BASE_FOV = 75
 const MENU_FOV = 48
+const ADS_SENSITIVITY = 0.45
 const MENU_CAM = { pos: new THREE.Vector3(29, 20, 33), look: new THREE.Vector3(-4, 1.5, -3) }
 const MAX_PIXEL_RATIO = 1.5
 
@@ -199,12 +200,15 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden && state === STATE.PLAYING) pauseGame()
 })
 
-renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault())
+// 右键菜单挂在 document 上：准备页 / 暂停页的右键同样要拦住，不能只管画布
+document.addEventListener('contextmenu', (e) => e.preventDefault())
 
 let dragging = false
 let lastMouse = { x: 0, y: 0 }
 
 renderer.domElement.addEventListener('mousedown', (e) => {
+  // 右键默认行为要在状态判断之前吃掉，否则准备页/暂停时拦不住
+  if (e.button === 2) e.preventDefault()
   if (state !== STATE.PLAYING) return
   if (e.button === 0) {
     shootPressed = true
@@ -238,7 +242,7 @@ window.addEventListener('mousemove', (e) => {
     return
   }
   lastMouse = { x: e.clientX, y: e.clientY }
-  const sens = baseSensitivity() * (player.ads ? 0.45 : 1)
+  const sens = baseSensitivity() * (player.ads ? ADS_SENSITIVITY * adsSensitivityScale(weaponState, BASE_FOV) : 1)
   player.look(dx, dy, sens)
   weaponView.look(dx, dy)
 })

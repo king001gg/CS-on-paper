@@ -261,7 +261,7 @@ export class WeaponView {
     const hipZ = this.current === 'smg' ? -0.38 : -0.5
     const adsX = 0.0
     const adsY = -0.075
-    const adsZ = this.current === 'smg' ? -0.3 : -0.4
+    const adsZ = this.current === 'smg' ? -0.62 : -0.4
     const t = this.adsT
     const switchDrop = this.switchT > 0 ? Math.sin((1 - this.switchT / def.switchTime) * Math.PI) : 0
     const reloadDip = Math.sin(this.reloadT * Math.PI) * 1.0

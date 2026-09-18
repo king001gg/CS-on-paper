@@ -195,3 +195,14 @@ export function adsFov(state, baseFovDeg) {
   if (def.adsZoom >= 2) return scopeFov(baseFovDeg, def.adsZoom)
   return baseFovDeg * def.adsFovScale
 }
+
+/**
+ * 开镜灵敏度缩放：monitor-distance 匹配，让准星在屏幕上的移动距离与不开镜时一致。
+ * 对走 scopeFov 的武器恒等于 1 / adsZoom（scopeFov 正是本式 tan 反算的）；
+ * 对走线性 fov 的武器则贴合它自己的缩放。
+ */
+export function adsSensitivityScale(state, baseFovDeg) {
+  const base = (baseFovDeg * Math.PI) / 180
+  const ads = (adsFov(state, baseFovDeg) * Math.PI) / 180
+  return Math.tan(ads / 2) / Math.tan(base / 2)
+}
