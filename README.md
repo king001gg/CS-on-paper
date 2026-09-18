@@ -1,6 +1,6 @@
 # 纸上交锋 · PAPER STRIKE
 
-**[在线试玩 →](https://moeyui1.github.io/CS-on-paper/)** · [源码](https://github.com/moeyui1/CS-on-paper) · [技术文档](docs/TECHNICAL.md) · [Prompt 参考](RECREATE_PROMPT.md)
+**[在线试玩 →](https://moeyui1.github.io/CS-on-paper/)** · [技术文档](docs/TECHNICAL.md) · [Prompt 参考](RECREATE_PROMPT.md)
 
 一个单人、单关卡的网页 3D 第一人称射击 Demo。在涂鸦本般的「日光街区」，用纸板枪与大头小豆人交战。暖黄、橘红、青绿配色，搭配手绘轮廓和漫画反馈。
 
