@@ -6,6 +6,15 @@ import { WEAPONS } from './weapon-state.js'
 
 const INK = new THREE.Color(PALETTE.ink)
 
+/**
+ * 冲锋枪开镜时只淡掉「准星」那一小块，枪身其余部分保持实心。
+ * 准星导轨正好压在准心线上，淡掉它视野就通了；枪身不动则保留据枪的分量感。
+ * 0.5 是「看得见一层半透明准星」而不是「准星没了」—— 再低就只剩个影子。
+ */
+const SMG_ADS_SIGHT_OPACITY = 0.5
+/** 描边比准星本体更淡，否则黑色描边会在准心位置框出一个明显的方框 */
+const SMG_ADS_SIGHT_OUTLINE_OPACITY = 0.3
+
 function toon(color, o = {}) {
   return new THREE.MeshToonMaterial({
     color: new THREE.Color(color),
@@ -23,10 +32,61 @@ function inkMat() {
   return outlineMat
 }
 
+/**
+ * 收集「准星」部件的材质；枪体材质一概不碰，保持实心。
+ * 描边 inkMat() 是跨两把枪共用的单例，必须复制一份归自己，
+ * 否则淡化冲锋枪的准星会连狙击枪的描边一起淡掉。
+ * 准星本体与描边分两组，因为两者要淡到不同的程度。
+ */
+function collectSightMaterials(group) {
+  const body = new Set()
+  const outline = new Set()
+  let outlineClone = null
+  group.traverse((o) => {
+    if (!o.isMesh || !o.material || !o.userData.sight) return
+    if (o.material === outlineMat) {
+      if (!outlineClone) {
+        outlineClone = o.material.clone()
+        outlineClone.userData.isOutline = true
+      }
+      o.material = outlineClone
+      outline.add(o.material)
+    } else {
+      body.add(o.material)
+    }
+  })
+  return { body: [...body], outline: [...outline] }
+}
+
+/**
+ * 改写一组材质的不透明度。transparent 只在跨越阈值时翻转，避免每帧触发材质重编译。
+ * 刻意保留 depthWrite：只渲染最靠前的表面，枪才是一把轮廓完整的半透明实体；
+ * 关掉它会让所有面一起混合，枪身糊成一堆透明板，看不出是把枪。
+ */
+function fade(list, alpha) {
+  const ghost = alpha < 0.999
+  for (const m of list) {
+    if (m.transparent !== ghost) {
+      m.transparent = ghost
+      m.needsUpdate = true
+    }
+    m.opacity = alpha
+  }
+}
+
+function applySightOpacity(model, bodyAlpha, outlineAlpha) {
+  const mats = model.userData.sightMats
+  if (!mats) return
+  fade(mats.body, bodyAlpha)
+  fade(mats.outline, outlineAlpha)
+}
+
+/** o.sight：标记为准星部件，开镜时只有这些部件会被淡化（连同它自己的描边） */
 function part(parent, geo, mat, x, y, z, o = {}) {
   const mesh = new THREE.Mesh(geo, mat)
   mesh.position.set(x, y, z)
   if (o.rot) mesh.rotation.set(o.rot[0] || 0, o.rot[1] || 0, o.rot[2] || 0)
+  if (o.sight) mesh.userData.sight = true
   parent.add(mesh)
   if (o.outline !== false) {
     const pad = o.pad ?? 0.012
@@ -36,6 +96,7 @@ function part(parent, geo, mat, x, y, z, o = {}) {
     if (line) {
       line.position.copy(mesh.position)
       line.rotation.copy(mesh.rotation)
+      if (o.sight) line.userData.sight = true
       parent.add(line)
     }
   }
@@ -81,7 +142,9 @@ export function buildSmgModel() {
   const orange = toon(PALETTE.uiAccent)
   const yellow = toon(PALETTE.yellow)
   part(g, new THREE.BoxGeometry(0.1, 0.13, 0.4), cardboard, 0, 0, 0, { pad: 0.014 })
-  part(g, new THREE.BoxGeometry(0.055, 0.045, 0.26), teal, 0, 0.085, -0.03, { pad: 0.012 })
+  // 准星导轨用独立材质并标记为 sight：开镜时只淡化它，
+  // 枪管/机匣等其他 teal 部件共用同一个 teal 材质，不能跟着淡
+  part(g, new THREE.BoxGeometry(0.055, 0.045, 0.26), toon(PALETTE.teal), 0, 0.085, -0.03, { pad: 0.012, sight: true })
   part(g, new THREE.CylinderGeometry(0.033, 0.033, 0.2, 10), teal, 0, 0.012, -0.28, { rot: [Math.PI / 2, 0, 0], pad: 0.012 })
   part(g, new THREE.CylinderGeometry(0.042, 0.042, 0.03, 10), orange, 0, 0.012, -0.37, { rot: [Math.PI / 2, 0, 0], pad: 0.008 })
   part(g, new THREE.BoxGeometry(0.05, 0.18, 0.075), orange, 0, -0.14, -0.02, { rot: [0.16, 0, 0], pad: 0.01 })
@@ -160,6 +223,7 @@ export class WeaponView {
     }
     for (const key of Object.keys(this.models)) {
       const m = this.models[key]
+      m.userData.sightMats = collectSightMaterials(m)
       m.visible = false
       this.root.add(m)
     }
@@ -261,7 +325,7 @@ export class WeaponView {
     const hipZ = this.current === 'smg' ? -0.38 : -0.5
     const adsX = 0.0
     const adsY = -0.075
-    const adsZ = this.current === 'smg' ? -0.62 : -0.4
+    const adsZ = -0.4
     const t = this.adsT
     const switchDrop = this.switchT > 0 ? Math.sin((1 - this.switchT / def.switchTime) * Math.PI) : 0
     const reloadDip = Math.sin(this.reloadT * Math.PI) * 1.0
@@ -281,6 +345,14 @@ export class WeaponView {
       const k = this.boltT > 0 ? Math.sin((1 - this.boltT / 0.42) * Math.PI) : 0
       model.userData.bolt.position.z = -k * 0.075
       model.userData.bolt.rotation.z = k * 0.5
+    }
+    // 冲锋枪开镜时只淡掉准星那一小块，枪身保持实心
+    if (this.current === 'smg') {
+      applySightOpacity(
+        model,
+        1 + (SMG_ADS_SIGHT_OPACITY - 1) * t,
+        1 + (SMG_ADS_SIGHT_OUTLINE_OPACITY - 1) * t
+      )
     }
     model.visible = !this.hidden
     this.updateCameraFov(this.baseFov, this.adsT)
