@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>纸上交锋 · PAPER STRIKE</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game-canvas"></canvas>
+
+      <!-- ================= 准备页 ================= -->
+      <section id="menu" class="screen">
+        <div class="menu-left paper-panel">
+          <div class="brand-mark">
+            <svg viewBox="0 0 120 24" class="brand-svg" aria-hidden="true">
+              <path d="M2 16 C18 6, 34 22, 52 12 S86 4, 118 14" fill="none" stroke="#293331" stroke-width="2.4" stroke-linecap="round" />
+              <path d="M4 20 C22 12, 40 24, 58 15" fill="none" stroke="#E66B43" stroke-width="2" stroke-linecap="round" opacity="0.8" />
+            </svg>
+            <span>PAPER STRIKE</span>
+          </div>
+          <h1 class="title">纸上交锋</h1>
+          <p class="tagline">日光街区 · 训练场 <b>RANGE 01</b></p>
+          <p class="brief">素描本里的巷战演习。清空 <b>8</b> 名纸板小兵即可完成任务；生命值归零则演习失败。</p>
+          <ul class="feature-list">
+            <li>随身携带冲锋枪与狙击枪，弹药无限但需要换弹</li>
+            <li>按住右键瞄准，狙击枪有 4 倍镜</li>
+            <li>善用木箱、矮墙与东侧高台</li>
+          </ul>
+          <button id="btn-start" class="btn-primary">进入训练场</button>
+          <p class="menu-hint">点击开始会请求鼠标锁定，按 <kbd>Esc</kbd> 随时暂停</p>
+        </div>
+
+        <div class="menu-right">
+          <div class="map-tag paper-tag">日光街区</div>
+          <div class="loadout paper-panel">
+            <div class="loadout-title">开场装备</div>
+            <div class="loadout-cards">
+              <button class="loadout-card is-active" data-weapon="smg">
+                <svg viewBox="0 0 96 48" class="gun-svg" aria-hidden="true">
+                  <rect x="30" y="18" width="34" height="12" rx="2" fill="#E8D3A9" stroke="#293331" stroke-width="2.4" />
+                  <rect x="14" y="21" width="18" height="6" rx="2" fill="#659A99" stroke="#293331" stroke-width="2.2" />
+                  <path d="M36 30 h10 l-3 12 h-8 z" fill="#E66B43" stroke="#293331" stroke-width="2.2" />
+                  <path d="M58 30 h7 l-2 9 h-6 z" fill="#E8D3A9" stroke="#293331" stroke-width="2.2" />
+                  <rect x="62" y="20" width="12" height="8" rx="2" fill="#F4BD55" stroke="#293331" stroke-width="2.2" />
+                  <path d="M46 16 v-6" stroke="#293331" stroke-width="2.2" stroke-linecap="round" />
+                </svg>
+                <span class="card-name">蜂鸟 · 冲锋枪</span>
+                <span class="card-meta">连射 · 30 发 · 20 伤害</span>
+              </button>
+              <button class="loadout-card" data-weapon="sniper">
+                <svg viewBox="0 0 96 48" class="gun-svg" aria-hidden="true">
+                  <rect x="34" y="20" width="30" height="10" rx="2" fill="#E8D3A9" stroke="#293331" stroke-width="2.4" />
+                  <rect x="8" y="22" width="26" height="5" rx="2" fill="#659A99" stroke="#293331" stroke-width="2.2" />
+                  <rect x="38" y="12" width="20" height="7" rx="3" fill="#91B6BC" stroke="#293331" stroke-width="2.2" />
+                  <path d="M40 30 h9 l-3 11 h-7 z" fill="#E66B43" stroke="#293331" stroke-width="2.2" />
+                  <rect x="60" y="22" width="14" height="8" rx="2" fill="#F4BD55" stroke="#293331" stroke-width="2.2" />
+                </svg>
+                <span class="card-name">长鸣 · 狙击枪</span>
+                <span class="card-meta">单发 · 5 发 · 100 伤害</span>
+              </button>
+            </div>
+            <p class="loadout-hint">两把枪随身携带，游戏中按 <kbd>1</kbd> / <kbd>2</kbd> 或滚轮切换</p>
+          </div>
+        </div>
+
+        <div class="menu-bottom paper-tag">
+          <b>操作</b> WASD 移动 · 鼠标观察 · 左键射击 · 右键瞄准 · Space 跳跃 · R 换弹 · 1/2 切枪 · Esc 暂停
+        </div>
+        <button id="btn-mute-menu" class="mute-btn" title="音效开关">音效 开</button>
+      </section>
+
+      <!-- ================= HUD ================= -->
+      <section id="hud" class="hidden">
+        <div class="hud-topleft paper-chip">
+          <div class="mission-name">任务 · 日光街区</div>
+          <div class="mission-count"><b id="enemies-left">8</b> / 8 名敌人</div>
+          <div class="pips" id="progress-pips"></div>
+        </div>
+
+        <div class="hud-topright paper-chip">
+          <div class="timer" id="hud-timer">00:00</div>
+          <div class="status-line" id="hud-status">交火中</div>
+        </div>
+
+        <div class="hud-topcenter">
+          <button id="btn-pause" class="icon-btn" title="暂停">❚❚</button>
+          <button id="btn-mute" class="icon-btn" title="音效">♪</button>
+        </div>
+
+        <div id="crosshair">
+          <span class="ch-line ch-up"></span>
+          <span class="ch-line ch-down"></span>
+          <span class="ch-line ch-left"></span>
+          <span class="ch-line ch-right"></span>
+          <span class="ch-dot"></span>
+        </div>
+        <div id="hit-marker" class="hidden">
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <div id="headshot-flag" class="hidden">爆头！</div>
+
+        <div id="scope" class="hidden">
+          <div class="scope-vignette"></div>
+          <div class="scope-ring">
+            <span class="scope-cross-h"></span>
+            <span class="scope-cross-v"></span>
+            <span class="scope-tick t1"></span><span class="scope-tick t2"></span>
+            <span class="scope-tick t3"></span><span class="scope-tick t4"></span>
+          </div>
+          <div class="scope-label">4× 长鸣</div>
+        </div>
+
+        <div class="hud-bottomleft paper-chip">
+          <div class="hp-number" id="hp-number">100</div>
+          <div class="hp-bar"><div class="hp-fill" id="hp-fill"></div></div>
+          <div class="hp-label">生命值</div>
+        </div>
+
+        <div class="hud-bottomright paper-chip">
+          <div class="weapon-name" id="weapon-name">蜂鸟 · 冲锋枪</div>
+          <div class="ammo">
+            <span class="ammo-mag" id="ammo-mag">30</span>
+            <span class="ammo-sep">/</span>
+            <span class="ammo-inf" title="备弹无限">∞</span>
+          </div>
+          <div class="reload-bar"><div class="reload-fill" id="reload-fill"></div></div>
+          <div class="reload-text hidden" id="reload-text">换弹中…</div>
+        </div>
+
+        <div id="damage-vignette"></div>
+        <div id="comic-layer"></div>
+        <div id="toast-layer"></div>
+        <div id="compat-hint" class="hidden">兼容模式：拖动鼠标观察 · 方向键转向 · <kbd>F</kbd> 射击 · <kbd>T</kbd> 瞄准</div>
+      </section>
+
+      <!-- ================= 暂停 ================= -->
+      <section id="pause" class="screen hidden">
+        <div class="dialog paper-panel">
+          <h2>暂停</h2>
+          <p class="dialog-sub">演习已暂停，弹药与计时都不会推进。</p>
+          <div class="dialog-actions">
+            <button id="btn-resume" class="btn-primary">继续演习</button>
+            <button id="btn-restart" class="btn-secondary">重新开始</button>
+            <button id="btn-tomenu" class="btn-secondary">返回准备页</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 结算 ================= -->
+      <section id="result" class="screen hidden">
+        <div class="dialog paper-panel">
+          <h2 id="result-title">任务完成</h2>
+          <p class="dialog-sub" id="result-sub">日光街区已经清空。</p>
+          <div class="result-grid">
+            <div class="result-item"><span class="k">击杀</span><span class="v" id="result-kills">8</span></div>
+            <div class="result-item"><span class="k">用时</span><span class="v" id="result-time">01:20</span></div>
+            <div class="result-item"><span class="k">命中率</span><span class="v" id="result-acc">42%</span></div>
+            <div class="result-item"><span class="k">命中 / 射击</span><span class="v" id="result-shots">21 / 50</span></div>
+          </div>
+          <div class="dialog-actions">
+            <button id="btn-again" class="btn-primary">再来一次</button>
+            <button id="btn-result-menu" class="btn-secondary">返回准备页</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 兼容模式提示 ================= -->
+      <section id="lock-hint" class="hidden">
+        <div class="lock-toast paper-chip" id="lock-toast">正在请求鼠标锁定…</div>
+      </section>
+
+      <!-- ================= WebGL 错误 ================= -->
+      <section id="webgl-error" class="screen hidden">
+        <div class="dialog paper-panel">
+          <h2>无法启动 3D 渲染</h2>
+          <p class="dialog-sub" id="webgl-error-text">
+            你的浏览器当前不支持 WebGL 2，或者显卡加速被禁用。<br />
+            请使用较新的桌面版 Chrome / Edge，并在设置中开启硬件加速后重试。
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
