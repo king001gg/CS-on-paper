@@ -30,6 +30,7 @@
             <li>善用木箱、矮墙与东侧高台</li>
           </ul>
           <button id="btn-start" class="btn-primary">进入训练场</button>
+          <button id="btn-net" class="btn-secondary">双人对战</button>
           <p class="menu-hint">点击开始会请求鼠标锁定，按 <kbd>Esc</kbd> 随时暂停</p>
         </div>
 
@@ -83,6 +84,11 @@
         <div class="hud-topright paper-chip">
           <div class="timer" id="hud-timer">00:00</div>
           <div class="status-line" id="hud-status">交火中</div>
+          <!-- 对手行只在对战模式出现。塞在已有的右上角里，不新增第五个 HUD 角 -->
+          <div class="opponent-line hidden" id="opponent-line">
+            <span id="opponent-name">对手</span>
+            <b id="opponent-hp">100</b>
+          </div>
         </div>
 
         <div class="hud-topcenter">
@@ -163,6 +169,87 @@
           <div class="dialog-actions">
             <button id="btn-again" class="btn-primary">再来一次</button>
             <button id="btn-result-menu" class="btn-secondary">返回准备页</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 对战准备：手动交换邀请码 / 应战码 ================= -->
+      <section id="net" class="screen hidden">
+        <div class="dialog paper-panel net-panel">
+          <h2>双人对战</h2>
+          <p class="dialog-sub">
+            两台电脑连到同一个局域网，各自打开这个页面，互相交换一段邀请码即可。<br />
+            全程直连，不经过任何第三方服务器，也不需要注册。
+          </p>
+
+          <!-- 步骤 1 -->
+          <div class="net-step" data-step="role">
+            <div class="net-step-title">第 1 步 · 选身份</div>
+            <p class="net-note">一个人当房主（生成邀请码），另一个人当挑战者（粘贴邀请码）。谁当都行。</p>
+            <details class="net-advanced">
+              <summary>两台电脑不在同一个局域网？点这里填 STUN 地址</summary>
+              <input id="net-stun" class="net-code" type="text"
+                     placeholder="stun:服务器地址:3478（留空 = 只用局域网直连）" />
+              <p class="net-note">
+                留空时全程不发起任何外部请求，代价是只能在同一个 wifi / 路由器下直连。<br />
+                填了之后连接会经过这台服务器；地址由你自己提供，本项目不内置、不推荐任何第三方。
+              </p>
+            </details>
+            <div class="dialog-actions">
+              <button id="btn-net-host" class="btn-primary">我是房主 · 生成邀请码</button>
+              <button id="btn-net-guest" class="btn-secondary">我是挑战者 · 我有邀请码</button>
+            </div>
+          </div>
+
+          <!-- 步骤 2A · 房主 -->
+          <div class="net-step hidden" data-step="host">
+            <div class="net-step-title">第 2 步 · 把邀请码发给对方</div>
+            <p class="net-note">
+              整段复制（<b>连开头的 PS1- 和结尾的 -END 一起</b>），用微信 / QQ 发过去。
+              对方会回一段应战码给你。
+            </p>
+            <textarea id="offer-out" class="net-code" rows="5" readonly></textarea>
+            <div class="dialog-actions">
+              <button id="btn-copy-offer" class="btn-secondary">复制邀请码</button>
+            </div>
+            <div class="net-step-title net-step-gap">第 3 步 · 粘贴对方发回来的应战码</div>
+            <textarea id="answer-in" class="net-code" rows="5" placeholder="把对方发来的应战码整段粘在这里"></textarea>
+            <div class="dialog-actions">
+              <button id="btn-apply-answer" class="btn-primary">应用应战码</button>
+            </div>
+          </div>
+
+          <!-- 步骤 2B · 挑战者 -->
+          <div class="net-step hidden" data-step="guest">
+            <div class="net-step-title">第 2 步 · 粘贴房主发来的邀请码</div>
+            <textarea id="offer-in" class="net-code" rows="5" placeholder="把房主发来的邀请码整段粘在这里"></textarea>
+            <div class="dialog-actions">
+              <button id="btn-make-answer" class="btn-primary">生成应战码</button>
+            </div>
+            <div class="net-step-title net-step-gap">第 3 步 · 把应战码发回去</div>
+            <textarea id="answer-out" class="net-code" rows="5" readonly></textarea>
+            <div class="dialog-actions">
+              <button id="btn-copy-answer" class="btn-secondary">复制应战码</button>
+            </div>
+          </div>
+
+          <!-- 步骤 4 · 已连接 -->
+          <div class="net-step hidden" data-step="linked">
+            <div class="net-step-title">已连接</div>
+            <p class="net-note" id="net-link-info">通道已建立。</p>
+            <div class="dialog-actions">
+              <button id="btn-net-start" class="btn-primary">进入决斗场地</button>
+            </div>
+          </div>
+
+          <!-- 常驻状态栏：无论在哪一步都显示，失败时用户才知道自己卡在哪。
+               吸附在面板底部 —— 内容再长，「返回准备页」也不该要滚动才能点到 -->
+          <div class="net-footer">
+            <p id="net-status" class="net-status">选择身份开始。</p>
+            <div class="dialog-actions">
+              <button id="btn-net-diag" class="btn-secondary">复制诊断信息</button>
+              <button id="btn-net-back" class="btn-secondary">返回准备页</button>
+            </div>
           </div>
         </div>
       </section>

@@ -4,8 +4,28 @@ import * as THREE from 'three'
 import { PALETTE, makeRng } from './sketch.js'
 import * as TEX from './textures.js'
 
-export const HEAD_HITBOX = { y: 1.55, rx: 0.46, ry: 0.49, rz: 0.42 }
-export const BODY_HITBOX = { y: 0.79, rx: 0.4, ry: 0.47, rz: 0.32 }
+/**
+ * 命中盒按「这个角色在别人眼里长什么样」来选，不按它的物理身高。
+ * 敌人模型高 1.9，玩家物理身高 1.8，但双人对战时远端玩家是用 createEnemyModel()
+ * 渲染的纸片小豆人 —— 所以网络玩家该用 enemy 档案，用 player 档案反而会错位。
+ * player 档案留给将来可能出现的、用独立模型渲染的本地角色。
+ */
+export const HITBOX_PROFILES = {
+  enemy: {
+    head: { y: 1.55, rx: 0.46, ry: 0.49, rz: 0.42 },
+    body: { y: 0.79, rx: 0.4, ry: 0.47, rz: 0.32 }
+  },
+  player: {
+    head: { y: 1.62, rx: 0.3, ry: 0.26, rz: 0.3 },
+    body: { y: 0.95, rx: 0.34, ry: 0.62, rz: 0.3 }
+  }
+}
+
+const DEFAULT_PROFILE = HITBOX_PROFILES.enemy
+
+// 旧导出保留：combat.test.js 直接引用这两个常量
+export const HEAD_HITBOX = HITBOX_PROFILES.enemy.head
+export const BODY_HITBOX = HITBOX_PROFILES.enemy.body
 
 /** 射线与轴对齐包围盒求交（slab 法），返回最近正交点 */
 export function rayBox(ox, oy, oz, dx, dy, dz, b, maxT = Infinity) {
@@ -99,13 +119,21 @@ export function raycastSolids(origin, dir, solids, maxDist = 200) {
   return best
 }
 
-export function raycastEnemies(origin, dir, enemies, maxDist = 200) {
+/**
+ * 射线与一组可命中角色的求交。只要求目标有 position(Vector3) 与 alive，
+ * 所以 Player 只要补一个 get alive() 就能直接进这个列表，不必另写一套射线。
+ * 每个目标用自己的 hitProfile 取命中盒（见 HITBOX_PROFILES 的注释）。
+ */
+export function raycastTargets(origin, dir, targets, maxDist = 200) {
   let best = null
-  for (const e of enemies) {
+  for (const e of targets) {
     if (!e.alive) continue
     const p = e.position
-    const headT = rayEllipsoid(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, p.x, p.y + HEAD_HITBOX.y, p.z, HEAD_HITBOX.rx, HEAD_HITBOX.ry, HEAD_HITBOX.rz, maxDist)
-    const bodyT = rayEllipsoid(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, p.x, p.y + BODY_HITBOX.y, p.z, BODY_HITBOX.rx, BODY_HITBOX.ry, BODY_HITBOX.rz, maxDist)
+    const hb = HITBOX_PROFILES[e.hitProfile] || DEFAULT_PROFILE
+    const head = hb.head
+    const body = hb.body
+    const headT = rayEllipsoid(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, p.x, p.y + head.y, p.z, head.rx, head.ry, head.rz, maxDist)
+    const bodyT = rayEllipsoid(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, p.x, p.y + body.y, p.z, body.rx, body.ry, body.rz, maxDist)
     let part = null
     let t = Infinity
     if (headT !== null && headT <= (bodyT ?? Infinity)) { part = 'head'; t = headT }
@@ -118,17 +146,25 @@ export function raycastEnemies(origin, dir, enemies, maxDist = 200) {
   return best
 }
 
+// 旧名字保留为别名：combat.test.js 与 enemies.js 都在用
+export const raycastEnemies = raycastTargets
+
 /**
  * 一次射击的完整命中解算：取最近的实体遮挡与角色交点。
  * 墙体优先于同距离或几乎同距离的目标。
+ *
+ * targets 是通用的可命中角色列表（敌人、玩家、远端化身都可以混在一起）；
+ * enemies 保留为兼容别名。返回值的形状**刻意不改**——combat.test.js 有多处
+ * 断言 type === 'enemy' 与 shot.enemy，改名要单独做一次只动测试的提交。
  */
-export function resolveShot(origin, dir, { solids, enemies, maxDist = 200, wallBias = 0.03 }) {
+export function resolveShot(origin, dir, { solids, targets, enemies, maxDist = 200, wallBias = 0.03 }) {
+  const list = targets || enemies || []
   const wall = raycastSolids(origin, dir, solids, maxDist)
-  const enemy = raycastEnemies(origin, dir, enemies, maxDist)
-  if (wall && (!enemy || wall.t <= enemy.t + wallBias)) {
+  const target = raycastTargets(origin, dir, list, maxDist)
+  if (wall && (!target || wall.t <= target.t + wallBias)) {
     return { type: 'wall', hit: wall, point: wall.point, normal: wall.normal, distance: wall.t }
   }
-  if (enemy) return { type: 'enemy', hit: enemy, enemy: enemy.enemy, part: enemy.part, point: enemy.point, normal: enemy.normal, distance: enemy.t }
+  if (target) return { type: 'enemy', hit: target, enemy: target.enemy, part: target.part, point: target.point, normal: target.normal, distance: target.t }
   return { type: 'none', distance: maxDist }
 }
 

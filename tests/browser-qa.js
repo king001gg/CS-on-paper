@@ -158,6 +158,22 @@ await send('Log.enable')
 await send('Page.enable')
 await send('Network.enable')
 await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
+// 装一个哨兵，统计页面一共 new 了几次 RTCPeerConnection。
+// 这是「单人模式仍然全程离线」这个可证命题的**替代品**：
+// WebRTC 走 UDP，Network.requestWillBeSent 根本看不见它，
+// 所以原有的「无跨源请求」断言在引入联机之后不再能证明「离线」这个性质。
+// 页面脚本执行之前就要装好，否则会漏掉最早的几次构造。
+await send('Page.addScriptToEvaluateOnNewDocument', {
+  source: `window.__RTC_COUNT__ = 0;
+    (function () {
+      var Real = window.RTCPeerConnection;
+      if (!Real) return;
+      window.RTCPeerConnection = function () {
+        window.__RTC_COUNT__++;
+        return new Real(...arguments);
+      };
+    })();`
+})
 await send('Page.navigate', { url: URL_ARG })
 await sleep(3500)
 
@@ -176,6 +192,27 @@ if (PROD) {
   await shot('prod-02-hud')
   const canvasOk = await evaluate('(function(){ const c = document.getElementById("game-canvas"); const gl = c.getContext("webgl2") || c.getContext("webgl"); return !!gl && c.width > 0 && c.height > 0 })()')
   check('画布已创建 WebGL 上下文', canvasOk === true)
+
+  // 对战面板在**优化构建**里也要能用。这一段特别值得跑：
+  // 开发钩子被剥掉之后，面板走的全是生产路径，而 WebRTC 那一层不依赖任何 dev 设施。
+  // 「本地能连、发出去就连不上」这类问题，只有在这里才照得出来。
+  //
+  // ⚠️ 必须先重新加载回到准备页：上面已经进了游戏，#menu 是隐藏的，
+  // 而 #btn-net 在 #menu 里面 —— 隐藏元素的包围盒是零尺寸，
+  // 合成点击会落到 (0,0)，点了等于没点，而且**不报错**。
+  await send('Page.navigate', { url: URL_ARG })
+  await sleep(3000)
+  await clickSelector('#btn-net')
+  await sleep(600)
+  check('生产构建能打开对战面板', (await evaluate('!document.getElementById("net").classList.contains("hidden")')) === true)
+  await clickSelector('#btn-net-host')
+  // waitFor 返回的是那个表达式的值，也就是 true/false，不是文本框内容 —— 内容要另取一次
+  const offerFilled = await waitFor('document.getElementById("offer-out").value.length > 0', 25000)
+  const prodOffer = await evaluate('document.getElementById("offer-out").value')
+  check('生产构建里也能生成邀请码', !!offerFilled && typeof prodOffer === 'string' && prodOffer.startsWith('PS1-'),
+    prodOffer ? prodOffer.length + ' 字符 / ' + prodOffer.split('\n').length + ' 行' : '文本框是空的')
+  await shot('prod-03-net')
+
   await sleep(1200)
   check('生产构建没有控制台错误', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
   check('没有加载跨源第三方资源', externalRequests.length === 0, externalRequests.slice(0, 3).join(' | '))
@@ -329,6 +366,63 @@ const layout = await evaluate('(function(){ const g = (id) => document.getElemen
 check('小窗口下 HUD 控件不互相遮挡', JSON.parse(layout).bad === false, layout)
 await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
 await sleep(400)
+
+// ---- 对战模式 ----
+// 第 1 期只有开发钩子这一个入口（准备页上没有按钮）。这几条守的是三样手工验过、
+// 但没有回归保护的东西：空场地、DUEL_SPAWNS、match 的 DUEL 分支，
+// 外加 EnemyManager.setSpawns 重建数组后那两处按引用缓存必须重新取。
+await evaluate('window.__PAPER_STRIKE__.startDuel()')
+await sleep(1500)
+let duel = await evaluate('window.__PAPER_STRIKE__.snapshot()')
+const duelSpawns = await evaluate('JSON.stringify([window.__PAPER_STRIKE__.world.duelSpawns[0], window.__PAPER_STRIKE__.world.duelSpawns[1]])')
+const sp = JSON.parse(duelSpawns)
+const near = (p, s) => Math.hypot(p[0] - s.x, p[2] - s.z) < 0.5
+check('决斗场地清空且双方各就各位', duel.mode === 'duel' && duel.enemiesAlive === 0 && duel.enemyStates.length === 0 && duel.opponent && duel.opponent.hasAvatar && duel.opponent.alive && near(duel.playerPos, sp[0]) && near([duel.opponent.x, 0, duel.opponent.z], sp[1]), JSON.stringify({ mode: duel.mode, e: duel.enemiesAlive, pos: duel.playerPos, opp: duel.opponent }))
+
+const duelHud = await evaluate('(function(){ const hid = (id) => document.getElementById(id).classList.contains("hidden"); const q = (s) => document.querySelector(s); return JSON.stringify({ name: q("#hud .mission-name").textContent, countHidden: q("#hud .mission-count").classList.contains("hidden"), pipsHidden: hid("progress-pips"), oppHidden: hid("opponent-line"), oppName: document.getElementById("opponent-name").textContent, oppHp: document.getElementById("opponent-hp").textContent, status: document.getElementById("hud-status").textContent }) })()')
+const dh = JSON.parse(duelHud)
+check('决斗 HUD 用对手血条换掉敌人计数', dh.name.includes('决斗') && dh.countHidden === true && dh.pipsHidden === true && dh.oppHidden === false && dh.oppName === '陪练' && dh.oppHp === '100' && dh.status === '决斗中', duelHud)
+await shot('11-duel-hud')
+
+// 贴近了打 —— 出生点之间没有直线视线（world.test.js 有断言），原地开枪只会打墙
+await evaluate('window.__PAPER_STRIKE__.switchTo("sniper")')
+await waitFor('window.__PAPER_STRIKE__.weaponState.switchTimer <= 0', 20000)
+await evaluate('(() => { const a = window.__PAPER_STRIKE__; a.teleport(6, -11); a.faceOpponent(); return true })()')
+await sleep(700)
+for (let i = 0; i < 4; i++) {
+  await evaluate('(() => { const a = window.__PAPER_STRIKE__; a.faceOpponent(); a.fireOnce(); return true })()')
+  await sleep(900)
+  duel = await evaluate('window.__PAPER_STRIKE__.snapshot()')
+  if (!duel.opponent || !duel.opponent.alive) break
+}
+const duelEnd = await evaluate('JSON.stringify({ title: document.getElementById("result-title").textContent, sub: document.getElementById("result-sub").textContent, shown: !document.getElementById("result").classList.contains("hidden"), hpText: document.getElementById("opponent-hp").textContent, hpDown: document.getElementById("opponent-hp").classList.contains("is-down") })')
+const de = JSON.parse(duelEnd)
+check('击倒对手即判决斗胜利', duel.state === 'victory' && duel.opponent && duel.opponent.alive === false && duel.opponent.hp === 0 && de.shown && de.title.includes('决斗胜利'), JSON.stringify({ state: duel.state, opp: duel.opponent, title: de.title }))
+check('对手倒下后血条显示「已击倒」而不是整行消失', de.hpDown === true && de.hpText === '已击倒', de.hpText)
+await shot('12-duel-victory')
+
+// 对战面板的壳子：第 2 期才会往里填信令，但现在必须能开能关
+await evaluate('window.__PAPER_STRIKE__.showNet()')
+await sleep(400)
+check('对战面板壳子可以打开', (await evaluate('!document.getElementById("net").classList.contains("hidden")')) === true)
+await shot('13-net-panel')
+await clickSelector('#btn-net-back')
+await sleep(800)
+check('对战面板可以退回准备页', (await evaluate('!document.getElementById("menu").classList.contains("hidden")')) === true)
+
+// 切回单人：这一步专门守 EnemyManager.setSpawns 换掉数组本身之后，
+// match.enemies 与 enemyCtx.enemies 有没有跟着重新取（这两个地方是按引用缓存的）
+await evaluate('window.__PAPER_STRIKE__.start()')
+await sleep(1500)
+const solo = await evaluate('window.__PAPER_STRIKE__.snapshot()')
+const refs = await evaluate('JSON.stringify({ players: window.__PAPER_STRIKE__.match.players.map(p => p.id), matchE: window.__PAPER_STRIKE__.match.enemies.length, mgrE: window.__PAPER_STRIKE__.enemyManager.enemies.length, oppHidden: document.getElementById("opponent-line").classList.contains("hidden"), countShown: !document.querySelector("#hud .mission-count").classList.contains("hidden") })')
+const rf = JSON.parse(refs)
+check('切回单人后敌人重建、HUD 与 match 的引用全部复位', solo.mode === 'solo' && solo.enemiesAlive === 8 && solo.opponent === null && rf.players.join() === 'p1' && rf.matchE === 8 && rf.mgrE === 8 && rf.oppHidden === true && rf.countShown === true, refs)
+
+// 单人流程必须一次都不碰 RTCPeerConnection。跑到这里，前面的单人、决斗、
+// 开关对战面板几条加起来已经把各条路径都走过了，计数仍是 0 才算真的「离线」。
+const rtcCount = await evaluate('window.__RTC_COUNT__')
+check('全程没有实例化 RTCPeerConnection（单人模式仍然完全离线）', rtcCount === 0, 'count=' + rtcCount)
 
 const perf = await evaluate('window.__PAPER_STRIKE__.snapshot()')
 check('渲染统计正常（有绘制调用）', perf.drawCalls > 0, 'calls=' + perf.drawCalls + ' tris=' + perf.triangles)

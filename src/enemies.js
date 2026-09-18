@@ -234,6 +234,50 @@ export function createEnemyModel(variant = 0, styleIndex = 0) {
 }
 
 // ---------------------------------------------------------------------------
+// 动画
+// ---------------------------------------------------------------------------
+/**
+ * 纸片豆子小人的走路动画。原先是 Enemy.animate 的方法体，原样搬出来成为自由函数，
+ * Enemy.animate 与 PlayerAvatar 都调它 —— 敌人和远端玩家的动作因此天然一致。
+ *
+ * state 需要提供 position / velocity / walkPhase / state / stateTime / headTilt，
+ * 后两者会被就地修改。Enemy 实例本身就满足这个形状，直接传 this 即可。
+ *
+ * speed 必须由调用方传入，不能就地用 velocity 的长度代替：这是「想走多快」，
+ * 而 velocity 是碰撞之后「实际走了多快」。撞墙时 speed=6.2 但 velocity≈0 ——
+ * 原实现里 moving 看 speed、幅度 k 看 velocity，两者不同源是刻意的
+ * （撞墙仍在迈步，只是幅度归零）。合并成一个会让撞墙时的摆臂变样。
+ *
+ * sync 是可选回调，在动画算完后调用，用于把模型摆到世界坐标（Enemy.syncModel）。
+ * 它的调用顺序被刻意保留：sync 会把 group.position.y 覆盖回 position.y，
+ * 于是上面那行「走路上下颠簸」实际不生效。这是改动前就有的行为，
+ * 不要顺手"修好"——那会改变所有敌人和远端玩家的观感。
+ */
+export function animateBeanRig(model, dt, state, speed, sync = null) {
+  if (!model) return
+  const m = model
+  const moving = speed > 0.05
+  const k = Math.min(1, Math.hypot(state.velocity.x, state.velocity.z) / ENEMY_CONFIG.chaseSpeed)
+  if (moving) state.walkPhase += dt * (6 + k * 8)
+  const swing = Math.sin(state.walkPhase) * (0.25 + k * 0.5)
+  m.legs[0].group.rotation.x = swing * 0.8
+  m.legs[1].group.rotation.x = -swing * 0.8
+  m.group.rotation.z = Math.sin(state.walkPhase * 0.5) * 0.05 * k
+  m.group.position.y = state.position.y + Math.abs(Math.sin(state.walkPhase)) * 0.045 * k
+  m.arms[0].group.rotation.x = -swing * 0.5
+  m.arms[1].group.rotation.x = -0.5 + swing * 0.25
+  const searching = state.state === 'search'
+  const targetTilt = searching ? 0.24 : 0
+  state.headTilt += (targetTilt - state.headTilt) * Math.min(1, dt * 3)
+  m.headGroup.rotation.z = state.headTilt + Math.sin(state.walkPhase * 0.5) * 0.03 * k
+  m.headGroup.rotation.y = searching ? Math.sin(state.stateTime * 1.3) * 0.28 : 0
+  if (m.bubble.visible) {
+    m.bubble.position.y = 2.42 + Math.sin(state.stateTime * 6) * 0.05
+  }
+  if (sync) sync()
+}
+
+// ---------------------------------------------------------------------------
 // 敌人个体
 // ---------------------------------------------------------------------------
 export class Enemy {
@@ -676,27 +720,9 @@ export class Enemy {
   }
 
   animate(dt, speed, ctx) {
-    if (!this.model) return
-    const m = this.model
-    const moving = speed > 0.05
-    const k = Math.min(1, Math.hypot(this.velocity.x, this.velocity.z) / ENEMY_CONFIG.chaseSpeed)
-    if (moving) this.walkPhase += dt * (6 + k * 8)
-    const swing = Math.sin(this.walkPhase) * (0.25 + k * 0.5)
-    m.legs[0].group.rotation.x = swing * 0.8
-    m.legs[1].group.rotation.x = -swing * 0.8
-    m.group.rotation.z = Math.sin(this.walkPhase * 0.5) * 0.05 * k
-    m.group.position.y = this.position.y + Math.abs(Math.sin(this.walkPhase)) * 0.045 * k
-    m.arms[0].group.rotation.x = -swing * 0.5
-    m.arms[1].group.rotation.x = -0.5 + swing * 0.25
-    const searching = this.state === 'search'
-    const targetTilt = searching ? 0.24 : 0
-    this.headTilt += (targetTilt - this.headTilt) * Math.min(1, dt * 3)
-    m.headGroup.rotation.z = this.headTilt + Math.sin(this.walkPhase * 0.5) * 0.03 * k
-    m.headGroup.rotation.y = searching ? Math.sin(this.stateTime * 1.3) * 0.28 : 0
-    if (this.model.bubble.visible) {
-      this.model.bubble.position.y = 2.42 + Math.sin(this.stateTime * 6) * 0.05
-    }
-    this.syncModel()
+    // 动画体已抽成自由函数（见上方 animateBeanRig）—— 远端玩家要用同一套动作。
+    // 传 this 当状态对象：Enemy 的字段形状正好满足它。
+    animateBeanRig(this.model, dt, this, speed, () => this.syncModel())
   }
 }
 
@@ -708,10 +734,35 @@ export class EnemyManager {
     this.world = world
     this.scene = scene
     world.scene = scene
-    this.enemies = world.enemySpawns.map((spawn, i) => new Enemy(world, i, spawn, opts))
+    this.opts = opts
     this.rng = makeRng(7)
     this.kills = 0
     this.pathBudget = 0
+    // spawns 允许外部覆盖：决斗模式要一块空场地，传 [] 即可。
+    // 注意传 [] 会让 aliveCount 为 0 —— 调用方的胜负判定必须先按模式分支，
+    // 否则会在开局瞬间宣告胜利（见 match.js 的 checkVictory 与 match.test.js 的回归用例）。
+    this.enemies = []
+    this.setSpawns(opts.spawns || world.enemySpawns)
+  }
+
+  /**
+   * 换一批出生点，按新列表重建敌人。
+   *
+   * 单人局与决斗局之间来回切换时要靠它 —— 决斗场地是空的，不能只是把旧的敌人
+   * 标记成死亡（那样模型还立在场上，而且 reset() 会把它们复活）。
+   *
+   * ⚠️ 重建会换掉 this.enemies 这个数组本身。任何按引用缓存过它的地方都必须重新取：
+   * 这里是 match.setEnemies() 与 main.js 的 enemyCtx.enemies。
+   * （enemyCtx.enemies 其实是冗余的 —— EnemyManager.update 会用 this.enemies 覆盖它 ——
+   *   但保持它正确，免得以后有人在别处读它时踩坑。）
+   */
+  setSpawns(spawns) {
+    for (const e of this.enemies) {
+      if (e.model && this.scene) this.scene.remove(e.model.group)
+    }
+    this.enemies = (spawns || []).map((spawn, i) => new Enemy(this.world, i, spawn, this.opts))
+    this.kills = 0
+    return this
   }
 
   get aliveCount() {

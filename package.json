@@ -9,6 +9,7 @@
   "description": "纸上交锋 · PAPER STRIKE —— 粗糙手绘草图风格的 3D 第一人称射击 Demo（Three.js + Vite）",
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test",

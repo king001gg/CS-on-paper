@@ -13,8 +13,18 @@ function approach(current, target, maxDelta) {
 }
 
 export class Player {
-  constructor(world) {
+  constructor(world, opts = {}) {
     this.world = world
+    this.id = opts.id ?? 'p1'
+    // 显示用名字。与武器无关 —— opponentStatus 曾经拿武器简称当人名，那是错的
+    this.name = opts.name ?? '纸片小兵'
+    this.team = opts.team ?? 'a'
+    this.isLocal = opts.isLocal !== false
+    // 命中盒跟「别人怎么渲染你」走：网络玩家是用敌人模型渲染的，故默认 enemy
+    this.hitProfile = opts.hitProfile ?? 'enemy'
+    this.variant = opts.variant ?? 0
+    this.weaponId = opts.weaponId ?? 'smg'
+    this.spawn = null
     this.position = new THREE.Vector3(0, 0, 19)
     this.velocity = new THREE.Vector3()
     this.yaw = 0
@@ -39,6 +49,7 @@ export class Player {
   }
 
   reset(spawn) {
+    this.spawn = spawn
     this.position.set(spawn.x, spawn.y ?? 0, spawn.z)
     this.velocity.set(0, 0, 0)
     this.yaw = spawn.yaw ?? 0
@@ -79,12 +90,27 @@ export class Player {
     return out.set(-Math.sin(this.yaw) * cp, Math.sin(this.pitch), -Math.cos(this.yaw) * cp)
   }
 
-  applyDamage(amount) {
-    if (this.dead || amount <= 0) return 0
+  /** raycastTargets 只要求目标有 position 与 alive，Player 由此可直接进命中列表 */
+  get alive() {
+    return !this.dead
+  }
+
+  /** 与 Enemy.takeDamage 同形的返回结构，便于 Match 用同一个结算入口 */
+  takeDamage(amount, part = 'body') {
+    if (this.dead || amount <= 0) return { died: false, damage: 0, part }
     const before = this.health
     this.health = Math.max(0, this.health - amount)
-    if (this.health === 0) this.dead = true
-    return before - this.health
+    const dealt = before - this.health
+    if (this.health === 0) {
+      this.dead = true
+      return { died: true, damage: dealt, part }
+    }
+    return { died: false, damage: dealt, part }
+  }
+
+  /** 保留旧接口：返回值仍是「实际扣掉的血量」这个数字，行为与改动前一致 */
+  applyDamage(amount) {
+    return this.takeDamage(amount, 'body').damage
   }
 
   heal(amount) {

@@ -21,6 +21,19 @@ export const ENEMY_SPAWNS = [
   { x: 19.1, z: 5.4 }
 ]
 
+/**
+ * 双人对战的两个出生点，关于场地中心 (0,0) 点对称，保证双方绝对公平。
+ * 间距 36.1 米，两人开局互相看不见 —— 直线对置会开局互狙，横向错开也没用，
+ * 必须同时在 X 和 Z 上错开。yaw 由「朝向对面那个人」算出：
+ * 从 A(-6,17) 看 B(6,-17)，方向是 (12,-34)，而 forward = (-sin, -cos)，
+ * 所以 yaw = atan2(-12, 34)。写成 atan2 而不是小数点是为了精确且自解释。
+ * 改动这两个点必须重跑 world.test.js 的合法性 / 连通性 / 无直线视线三条断言。
+ */
+export const DUEL_SPAWNS = [
+  { x: -6, y: 0, z: 17, yaw: Math.atan2(-12, 34) },
+  { x: 6, y: 0, z: -17, yaw: Math.atan2(12, -34) }
+]
+
 export const PHYS = {
   stepHeight: 0.35,
   gravity: 18,
@@ -866,6 +879,7 @@ export function createWorld(scene) {
     sky,
     playerSpawn: PLAYER_SPAWN,
     enemySpawns: ENEMY_SPAWNS,
+    duelSpawns: DUEL_SPAWNS,
     surfaceHeightAt: (x, z) => surfaceHeightAt(level.solids, x, z),
     supportHeightAt: (x, z, feetY, radius = 0) => supportHeightAt(level.solids, x, z, feetY, PHYS.stepHeight, radius),
     ceilingHeightAt: (x, z, feetY, headY, radius = 0) => ceilingHeightAt(level.solids, x, z, feetY, headY, radius),

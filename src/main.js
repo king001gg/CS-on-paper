@@ -1,16 +1,20 @@
 // 纸上交锋 · PAPER STRIKE —— 入口、渲染循环、输入与游戏状态
 import * as THREE from 'three'
-import { createWorld, PALETTE, PHYS } from './world.js'
+import { createWorld, PALETTE, PHYS, DUEL_SPAWNS } from './world.js'
 import { Player } from './player.js'
 import {
-  createWeaponState, updateWeaponState, tryFire, switchWeapon, cycleWeapon, startReload,
-  spreadFor, damageFor, WEAPONS, adsFov, adsSensitivityScale, reloadProgress, isReloading, resetWeaponState
+  switchWeapon, cycleWeapon, startReload, isReloading, WEAPONS
 } from './weapon-state.js'
-import { Effects, resolveShot } from './combat.js'
+import { Effects } from './combat.js'
 import { EnemyManager } from './enemies.js'
 import { WeaponView } from './weapons.js'
 import { GameAudio } from './audio.js'
 import { UI } from './ui.js'
+import { HumanInput, RemoteInput } from './input.js'
+import { createLoadout } from './loadout.js'
+import { PlayerAvatar } from './player-rig.js'
+import { Match, MODE, TEAM, opponentStatus } from './match.js'
+import { createNetPanel } from './net-panel.js'
 
 const STATE = { MENU: 'menu', PLAYING: 'playing', PAUSED: 'paused', VICTORY: 'victory', DEFEAT: 'defeat' }
 const BASE_FOV = 75
@@ -21,6 +25,20 @@ const MAX_PIXEL_RATIO = 1.5
 
 const ui = new UI()
 const canvas = document.getElementById('game-canvas')
+
+/**
+ * 对战面板。游戏逻辑通过回调交回这里 —— 面板不该知道 startGame 是什么。
+ *
+ * ⚠️ 这个面板在**用户点「我是房主 / 我是挑战者」之前不会建任何 RTCPeerConnection**。
+ * 单人模式的「全程零外部请求」是个可证命题，而连接一建就会开始探网络。
+ * tests/browser-qa.js 里有一条断言专门盯着这件事，别在这里提前 new。
+ */
+const netPanel = createNetPanel({
+  // 第 2 期只做到「通道打通」：双方各自进入本地决斗场地。
+  // 真正的对手同步（谁在哪、谁打中谁）是第 3 期，届时这里会改成发一条 ROUND 报文
+  onStartDuel: () => startGame(MODE.DUEL),
+  onBack: () => toMenu()
+})
 
 let renderer = null
 try {
@@ -68,44 +86,98 @@ bounce.position.set(30, 18, -30)
 scene.add(bounce)
 
 const world = createWorld(scene)
-const player = new Player(world)
+const player = new Player(world, { id: 'p1', team: 'a', isLocal: true })
 const enemyManager = new EnemyManager(world, scene)
 const effects = new Effects(scene)
 const weaponView = new WeaponView()
 const audio = new GameAudio()
-const weaponState = createWeaponState('smg')
 
-const stats = { shots: 0, hits: 0, kills: 0, headshots: 0 }
+// 对局：角色注册与胜负规则的唯一出处。
+// 第 1 期只有 SOLO 一种模式可达 —— DUEL 的规则已在 match.js 落地并测过，
+// 但入口要等第 3 期的网络面板，现在造一条走不到的代码路径只会变成没人测的死代码。
+const match = new Match({ world, mode: MODE.SOLO })
+match.addPlayer(player)
+match.setEnemies(enemyManager.enemies)
+
+// 持枪者：枪、后坐、镜头、统计。
+// 这些原来是 main.js:84-94 的模块级全局，现在收进对象 —— 双人对战时一人一份。
+const input = new HumanInput()
+const loadout = createLoadout(player, {
+  camera,
+  weaponView,
+  audio,
+  ui,
+  effects,
+  world,
+  match,
+  enemies: enemyManager,
+  weaponId: 'smg',
+  initialFov: MENU_FOV
+})
+
 let state = STATE.MENU
 let elapsed = 0
 let selectedWeapon = 'smg'
 let controlAcquired = false
 let compatMode = false
-let lastReloading = { smg: false, sniper: false }
-let recoilPitch = 0
-let recoilVel = 0
-let stepDistance = 0
-let wasOnGround = true
-let camFov = MENU_FOV
 let menuTime = 0
-let shootPressed = false
-let shootHeld = false
-let adsHeld = false
-let compatAds = false
-const pressed = new Set()
-const tmpDir = new THREE.Vector3()
-const tmpVec = new THREE.Vector3()
-const tmpVec2 = new THREE.Vector3()
+
+// ---------------------------------------------------------------------------
+// 决斗对手
+//
+// 第 1 期的对手是**本地陪练**：一个站在对面不动的 Player + 一个可见化身。
+// 它没有任何网络成分 —— 存在的意义是让「空场地 / DUEL_SPAWNS / match 的 DUEL 分支」
+// 这三样能被真打一局验证，而不是只躺在单测里。
+// 第 3 期把 duel.input 换成远端输入、把 applyState 的入参换成主机快照，结构不用动。
+// ---------------------------------------------------------------------------
+const duel = {
+  opponent: null,          // Player，进 match.players，负责挨打与胜负判定
+  avatar: null,            // PlayerAvatar，负责被看见
+  input: new RemoteInput() // 永不 push → 每帧返回零输入 → 陪练原地站着
+}
+
+/** 模式决定的本地出生点。放在 startGame 里算，是因为 match.restart 会读 p.spawn */
+function spawnFor(mode) {
+  return mode === MODE.DUEL ? DUEL_SPAWNS[0] : world.playerSpawn
+}
+
+function setupLocalDuel() {
+  const foe = new Player(world, { id: 'p2', team: TEAM.B, isLocal: false, name: '陪练', variant: 1 })
+  foe.reset(DUEL_SPAWNS[1])
+  match.addPlayer(foe)
+  duel.opponent = foe
+  duel.avatar = new PlayerAvatar(scene, { id: foe.id, name: foe.name, variant: foe.variant })
+  duel.avatar.applyState({
+    x: foe.position.x, y: foe.position.y, z: foe.position.z,
+    yaw: foe.yaw, hp: foe.health, maxHp: foe.maxHealth
+  }, 0)
+  return foe
+}
+
+/**
+ * 拆掉陪练，回到「场上只有我一个角色」的状态。
+ * 必须同时从 match 里摘掉 —— 只 dispose 模型的话，那个 Player 还在 players 里，
+ * DUEL 的胜负判定会以为对手还活着（或者下次 addPlayer 直接抛「重复的玩家 id」）。
+ */
+function clearLocalDuel() {
+  if (duel.avatar) duel.avatar.dispose()
+  duel.avatar = null
+  if (duel.opponent) {
+    match.removePlayer(duel.opponent.id)
+    duel.opponent = null
+  }
+}
+
+/** 任务栏只在单人模式有意义：决斗场地是空的，「剩余 0 名敌人」会读成「已经赢了」 */
+function refreshEnemyHud() {
+  if (match.mode === MODE.SOLO) ui.setEnemies(enemyManager.aliveCount)
+}
 
 // ---------------------------------------------------------------------------
 // 控制与鼠标锁定
 // ---------------------------------------------------------------------------
 function clearInput() {
-  pressed.clear()
-  shootPressed = false
-  shootHeld = false
-  adsHeld = false
-  compatAds = false
+  input.clear()
   player.velocity.x = 0
   player.velocity.z = 0
 }
@@ -174,14 +246,11 @@ window.addEventListener('keydown', (e) => {
     return
   }
   if (state !== STATE.PLAYING) return
-  pressed.add(e.code)
-  if (compatMode && e.code === 'KeyT') compatAds = !compatAds
-  if (compatMode && e.code === 'KeyF') {
-    shootPressed = true
-    shootHeld = true
-  }
+  input.setKey(e.code, true)
+  if (compatMode && e.code === 'KeyT') input.toggleCompatAds()
+  if (compatMode && e.code === 'KeyF') input.pressFire()
   if (e.code === 'KeyR') {
-    if (startReload(weaponState)) audio.reloadStart(weaponState.current)
+    if (startReload(loadout.weaponState)) audio.reloadStart(loadout.weaponState.current)
     else audio.dryFire()
   }
   if (e.code === 'Digit1') selectWeapon('smg')
@@ -189,8 +258,8 @@ window.addEventListener('keydown', (e) => {
 })
 
 window.addEventListener('keyup', (e) => {
-  pressed.delete(e.code)
-  if (e.code === 'KeyF') shootHeld = false
+  input.setKey(e.code, false)
+  if (e.code === 'KeyF') input.releaseFire()
 })
 
 window.addEventListener('blur', () => {
@@ -211,20 +280,19 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button === 2) e.preventDefault()
   if (state !== STATE.PLAYING) return
   if (e.button === 0) {
-    shootPressed = true
-    shootHeld = true
+    input.pressFire()
     if (compatMode) dragging = true
   } else if (e.button === 2) {
-    adsHeld = true
+    input.setAds(true)
   }
   lastMouse = { x: e.clientX, y: e.clientY }
 })
 window.addEventListener('mouseup', (e) => {
   if (e.button === 0) {
-    shootHeld = false
+    input.releaseFire()
     dragging = false
   } else if (e.button === 2) {
-    adsHeld = false
+    input.setAds(false)
   }
 })
 window.addEventListener('mousemove', (e) => {
@@ -242,14 +310,14 @@ window.addEventListener('mousemove', (e) => {
     return
   }
   lastMouse = { x: e.clientX, y: e.clientY }
-  const sens = baseSensitivity() * (player.ads ? ADS_SENSITIVITY * adsSensitivityScale(weaponState, BASE_FOV) : 1)
-  player.look(dx, dy, sens)
+  // 观察走事件路径而不是帧路径：鼠标事件的密度高于帧率，攒到下一帧会丢精度
+  player.look(dx, dy, loadout.lookSensitivity(baseSensitivity(), ADS_SENSITIVITY))
   weaponView.look(dx, dy)
 })
 window.addEventListener('wheel', (e) => {
   if (state !== STATE.PLAYING) return
   e.preventDefault()
-  if (cycleWeapon(weaponState, e.deltaY > 0 ? 1 : -1)) applyWeaponSwitch()
+  if (cycleWeapon(loadout.weaponState, e.deltaY > 0 ? 1 : -1)) applyWeaponSwitch()
 }, { passive: false })
 
 function baseSensitivity() {
@@ -257,46 +325,51 @@ function baseSensitivity() {
 }
 
 function selectWeapon(id) {
-  if (switchWeapon(weaponState, id)) applyWeaponSwitch()
+  if (switchWeapon(loadout.weaponState, id)) applyWeaponSwitch()
 }
 
 function applyWeaponSwitch() {
-  weaponView.setWeapon(weaponState.current)
+  weaponView.setWeapon(loadout.weaponState.current)
   audio.uiClick()
-  ui.setWeaponName(WEAPONS[weaponState.current].name)
+  ui.setWeaponName(WEAPONS[loadout.weaponState.current].name)
 }
 
 // ---------------------------------------------------------------------------
 // 游戏流程
 // ---------------------------------------------------------------------------
-function startGame() {
-  resetWeaponState(weaponState, selectedWeapon)
-  lastReloading = { smg: false, sniper: false }
-  player.reset(world.playerSpawn)
-  enemyManager.reset()
+function startGame(mode = MODE.SOLO) {
+  clearLocalDuel()
+  match.mode = mode
+  // 出生点必须在 match.restart() 之前写进 player.spawn —— restart 是 p.reset(p.spawn)
+  player.reset(spawnFor(mode))
+  if (mode === MODE.DUEL) setupLocalDuel()
+
+  // 决斗场地是空的。setSpawns 会换掉 enemyManager.enemies 这个数组本身，
+  // 所以下面两处按引用缓存过它的地方必须重新取（见 EnemyManager.setSpawns 的注释）。
+  enemyManager.setSpawns(mode === MODE.DUEL ? [] : world.enemySpawns)
+  match.setEnemies(enemyManager.enemies)
+  enemyCtx.enemies = enemyManager.enemies
+
+  loadout.reset(selectedWeapon)
   effects.clear()
-  stats.shots = 0
-  stats.hits = 0
-  stats.kills = 0
-  stats.headshots = 0
+  // 所有参战角色回到各自出生点、回满血；DUEL 模式下对手也会一起复位
+  match.restart()
   elapsed = 0
-  recoilPitch = 0
-  recoilVel = 0
-  stepDistance = 0
-  wasOnGround = true
   audio.init()
   audio.resume()
   audio.uiClick()
   weaponView.setWeapon(selectedWeapon, true)
   weaponView.setHidden(false)
   ui.setScope(false)
+  ui.setMode(mode)
+  ui.setOpponent(null)
   ui.showScreen('hud')
   ui.setSelectedWeapon(selectedWeapon)
   ui.setHealth(player.health)
-  ui.setAmmo(weaponState.weapons[selectedWeapon].ammo, WEAPONS[selectedWeapon].magSize)
+  ui.setAmmo(loadout.weaponState.weapons[selectedWeapon].ammo, WEAPONS[selectedWeapon].magSize)
   ui.setWeaponName(WEAPONS[selectedWeapon].name)
-  ui.setEnemies(enemyManager.aliveCount)
-  ui.setStatus('交火中')
+  refreshEnemyHud()
+  // 这里不设 status —— loadout.writeHud 每帧都会按模式写一次，写了也会被立刻覆盖
   state = STATE.PLAYING
   controlAcquired = compatMode
   clearInput()
@@ -322,8 +395,16 @@ function resumeGame() {
 function toMenu() {
   state = STATE.MENU
   clearInput()
+  // 回到准备页就把连接断掉：留着的 PeerConnection 会继续持有摄像头级别的网络探测
+  netPanel.close()
+  // 陪练跟着这一局一起退场：留在场上会出现在准备页的环绕镜头里
+  clearLocalDuel()
+  match.mode = MODE.SOLO
+  match.setEnemies(enemyManager.enemies)
   menuTime = 0
   ui.showScreen('menu')
+  ui.setMode(MODE.SOLO)
+  ui.setOpponent(null)
   ui.setScope(false)
   if (document.pointerLockElement) document.exitPointerLock()
 }
@@ -332,81 +413,21 @@ function endGame(win) {
   if (state === STATE.VICTORY || state === STATE.DEFEAT) return
   state = win ? STATE.VICTORY : STATE.DEFEAT
   clearInput()
+  const s = loadout.stats
   const timeText = formatTime(elapsed)
-  const accuracy = stats.shots > 0 ? stats.hits / stats.shots : 0
+  const accuracy = s.shots > 0 ? s.hits / s.shots : 0
   ui.setScope(false)
-  ui.setStatus(win ? '任务完成' : '演习失败')
+  const duelOver = match.mode === MODE.DUEL
+  ui.setStatus(duelOver ? (win ? '决斗胜利' : '被击倒') : win ? '任务完成' : '演习失败')
   if (win) audio.victory()
   else audio.defeat()
-  ui.showResult({ win, kills: stats.kills, time: timeText, accuracy, hits: stats.hits, shots: stats.shots })
+  ui.showResult({ win, kills: s.kills, time: timeText, accuracy, hits: s.hits, shots: s.shots, mode: match.mode })
   if (document.pointerLockElement) document.exitPointerLock()
 }
 
 function formatTime(seconds) {
   const s = Math.max(0, Math.floor(seconds))
   return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
-}
-
-// ---------------------------------------------------------------------------
-// 射击
-// ---------------------------------------------------------------------------
-function applySpread(dir, spread) {
-  if (spread <= 0) return dir
-  const angle = Math.random() * Math.PI * 2
-  const radius = Math.sqrt(Math.random()) * Math.tan(spread)
-  const right = tmpVec.set(1, 0, 0).applyQuaternion(camera.quaternion)
-  const up = tmpVec2.set(0, 1, 0).applyQuaternion(camera.quaternion)
-  dir.addScaledVector(right, Math.cos(angle) * radius).addScaledVector(up, Math.sin(angle) * radius)
-  return dir.normalize()
-}
-
-function fireWeapon() {
-  const id = weaponState.current
-  const def = WEAPONS[id]
-  const ads = player.ads
-  camera.getWorldDirection(tmpDir)
-  const origin = camera.position.clone()
-  const dir = applySpread(tmpDir.clone(), spreadFor(weaponState, { ads, moving: player.moving })).normalize()
-  const shot = resolveShot(origin, dir, { solids: world.solids, enemies: enemyManager.hitTargets, maxDist: 160 })
-
-  stats.shots += 1
-  audio.shoot(id)
-  weaponView.fire(id)
-  recoilVel += id === 'sniper' ? 3.1 : 0.55
-
-  const muzzle = weaponView.muzzleWorldPosition(camera, id)
-  const endPoint = shot.type === 'none' ? origin.clone().addScaledVector(dir, 140) : shot.point
-  effects.spawnTracer(muzzle, endPoint)
-
-  const noisePos = { x: player.position.x, y: player.eyeY, z: player.position.z }
-  enemyManager.alertNoise(noisePos)
-
-  if (shot.type === 'enemy') {
-    const part = shot.part
-    const damage = damageFor(id, part)
-    stats.hits += 1
-    if (part === 'head') stats.headshots += 1
-    const result = shot.enemy.takeDamage(damage, part)
-    effects.hitCharacter(shot.point, shot.normal)
-    ui.hitMarker(part === 'head')
-    audio.hitMarker(part === 'head')
-    if (part === 'head') ui.comic('爆头！', 0.5 + (Math.random() - 0.5) * 0.16, 0.4)
-    else ui.comic(id === 'sniper' ? 'POW!' : '啪！', 0.5 + (Math.random() - 0.5) * 0.2, 0.42)
-    if (result.died) {
-      stats.kills += 1
-      audio.enemyDown()
-      ui.setEnemies(enemyManager.aliveCount)
-      ui.toast('击倒一名纸板小兵 · 剩余 ' + enemyManager.aliveCount)
-      if (enemyManager.aliveCount === 0) {
-        // 最后一发的击杀与命中先记入统计，再判定胜利
-        ui.setEnemies(0)
-        endGame(true)
-      }
-    }
-  } else if (shot.type === 'wall') {
-    effects.impact(shot.point, shot.normal, 1)
-  }
-  void def
 }
 
 // ---------------------------------------------------------------------------
@@ -429,114 +450,85 @@ const enemyCtx = {
   }
 }
 
+/** 有人被击倒时的收尾：报数、播报，再看这一局是否已经分出胜负 */
+function afterKill() {
+  if (match.mode === MODE.DUEL) {
+    ui.toast('击倒对手')
+  } else {
+    ui.setEnemies(enemyManager.aliveCount)
+    ui.toast('击倒一名纸板小兵 · 剩余 ' + enemyManager.aliveCount)
+  }
+  settleVictory()
+}
+
+/**
+ * 胜负判定的唯一出口。规则本身在 match.js 里，这里只负责把结果翻译成 UI 动作。
+ * 原来这段判断散在 fireWeapon 与 updatePlaying 两处硬编码，且都是「敌人清零即胜利」，
+ * 决斗场地没有敌人时会开局瞬间误判 —— 所以规则必须先按模式分支（见 match.checkVictory）。
+ */
+function settleVictory() {
+  if (state !== STATE.PLAYING) return false
+  const verdict = match.checkVictory()
+  if (!verdict || !verdict.over) return false
+  // 最后一发的击杀与命中已经在射击结算里记入统计，这里只做胜利判定
+  refreshEnemyHud()
+  endGame(match.didLocalWin(verdict))
+  return true
+}
+
 function updatePlaying(dt) {
   elapsed += dt
-  const wantAds = (adsHeld || compatAds) && !isReloading(weaponState)
+  const frame = input.sample()
+  // 换弹时不许开镜 —— 夹在输入与玩家之间，所以写回帧里再交给 player
+  const wantAds = frame.ads && !isReloading(loadout.weaponState)
+  frame.ads = wantAds
   player.ads = wantAds
-  player.update(dt, {
-    forward: (pressed.has('KeyW') ? 1 : 0) - (pressed.has('KeyS') ? 1 : 0),
-    right: (pressed.has('KeyD') ? 1 : 0) - (pressed.has('KeyA') ? 1 : 0),
-    jump: pressed.has('Space'),
-    ads: wantAds
-  })
-  // 兼容模式：方向键转身
+  player.update(dt, frame)
+
+  // 兼容模式：方向键转身，F 射击，T 切换瞄准（边沿触发在键盘事件里处理）
   if (compatMode) {
-    // 兼容模式：方向键转向，F 射击，T 切换瞄准（边沿触发在键盘事件里处理）
-    if (pressed.has('ArrowLeft')) player.look(-34, 0, 0.0021)
-    if (pressed.has('ArrowRight')) player.look(34, 0, 0.0021)
-    if (pressed.has('ArrowUp')) player.look(0, -22, 0.0021)
-    if (pressed.has('ArrowDown')) player.look(0, 22, 0.0021)
+    if (input.isDown('ArrowLeft')) player.look(-34, 0, 0.0021)
+    if (input.isDown('ArrowRight')) player.look(34, 0, 0.0021)
+    if (input.isDown('ArrowUp')) player.look(0, -22, 0.0021)
+    if (input.isDown('ArrowDown')) player.look(0, 22, 0.0021)
   }
   enemyCtx.canFight = controlAcquired && !player.dead
 
-  // 武器
-  updateWeaponState(weaponState, dt)
-  const reloaded = weaponState.justReloaded
-  if (reloaded) audio.reloadEnd(reloaded)
-  for (const id of ['smg', 'sniper']) {
-    const now = isReloading(weaponState, id)
-    if (now && !lastReloading[id]) audio.reloadStart(id)
-    lastReloading[id] = now
-  }
-
-  const input = { pressed: shootPressed, held: shootHeld }
-  if (shootPressed || shootHeld) {
-    const res = tryFire(weaponState, input)
-    if (res.fired) fireWeapon()
-    else if (res.reason === 'empty') audio.dryFire()
-  }
-  shootPressed = false
-
-  // 后坐与镜头
-  recoilPitch += recoilVel * dt
-  recoilVel -= recoilVel * Math.min(1, dt * 7)
-  recoilPitch -= recoilPitch * Math.min(1, dt * 5.5)
+  loadout.updateCombat(dt, frame, { onKill: afterKill })
 
   enemyManager.update(dt, enemyCtx)
+  updateDuel(dt)
   effects.update(dt)
 
-  // 脚步声与落地
-  if (state === STATE.PLAYING && enemyManager.aliveCount === 0) {
-    // 所有击杀与命中已经在上面的射击结算中记录，这里只做胜利判定
-    ui.setEnemies(0)
-    endGame(true)
-  }
-
-  stepDistance += Math.hypot(player.velocity.x, player.velocity.z) * dt
-  if (player.onGround && stepDistance > 2.3) {
-    stepDistance = 0
-    audio.footstep()
-  }
-  if (player.onGround && !wasOnGround) audio.land()
-  wasOnGround = player.onGround
-
-  syncCamera(dt)
-  updateHud()
+  settleVictory()
+  loadout.updateFeet(dt)
+  loadout.syncCamera(dt)
+  loadout.writeHud(elapsed)
+  refreshEnemyHud()
 }
 
-function syncCamera(dt) {
-  const bobAmount = player.bob * 0.045
-  const bobY = Math.sin(player.stepPhase) * bobAmount
-  const bobX = Math.cos(player.stepPhase * 0.5) * bobAmount * 0.6
-  camera.position.set(player.position.x, player.position.y + player.eyeHeight + bobY, player.position.z)
-  const right = tmpVec.set(1, 0, 0).applyQuaternion(camera.quaternion)
-  camera.position.addScaledVector(right, bobX)
-  camera.rotation.set(player.pitch + recoilPitch, player.yaw, Math.sin(player.stepPhase * 0.5) * player.bob * 0.012)
-  const wantScope = player.ads && weaponState.current === 'sniper' && !isReloading(weaponState)
-  const targetFov = player.ads ? adsFov(weaponState, BASE_FOV) : BASE_FOV
-  camFov += (targetFov - camFov) * Math.min(1, dt * (wantScope ? 18 : 14))
-  camera.fov = camFov
-  camera.updateProjectionMatrix()
-
-  weaponView.setHidden(wantScope)
-  ui.setScope(wantScope)
-  weaponView.update(dt, {
-    ads: player.ads,
-    scoped: wantScope,
-    moving: player.moving,
-    bobSpeed: player.bob,
-    reloadProgress: isReloading(weaponState) ? reloadProgress(weaponState) : 0
-  })
-  weaponView.camera.quaternion.copy(camera.quaternion)
-  weaponView.camera.fov = camera.fov
-  weaponView.camera.updateProjectionMatrix()
-}
-
-function updateHud() {
-  const w = weaponState.weapons[weaponState.current]
-  const def = WEAPONS[weaponState.current]
-  ui.setHealth(player.health)
-  ui.setAmmo(w.ammo, def.magSize)
-  ui.setWeaponName(def.name)
-  ui.setEnemies(enemyManager.aliveCount)
-  ui.setTimer(elapsed)
-  const reloading = isReloading(weaponState)
-  ui.setReload(reloading ? reloadProgress(weaponState) : 0, reloading, '换弹中…')
-  ui.setCrosshairSpread(3 + spreadFor(weaponState, { ads: player.ads, moving: player.moving }) * 500)
-  if (!player.dead) {
-    const near = enemyManager.enemies.some((e) => e.alive && e.state === 'attack' && Math.hypot(e.position.x - player.position.x, e.position.z - player.position.z) < 18)
-    ui.setStatus(reloading ? '换弹中' : near ? '遭到射击' : '交火中')
-  }
+/**
+ * 陪练的推进：物理照常跑（RemoteInput 每帧给零输入，所以它站着不动），
+ * 状态再交给化身去摆。
+ *
+ * 第 3 期这里会变成：输入来自网络抖动缓冲、状态来自主机快照。
+ * 本块的形状就是那时候的形状，只是数据源不同。
+ */
+function updateDuel(dt) {
+  if (!duel.opponent) return
+  duel.opponent.update(dt, duel.input.sample())
+  duel.avatar.applyState({
+    x: duel.opponent.position.x,
+    y: duel.opponent.position.y,
+    z: duel.opponent.position.z,
+    yaw: duel.opponent.yaw,
+    pitch: duel.opponent.pitch,
+    hp: duel.opponent.health,
+    maxHp: duel.opponent.maxHealth
+  }, dt)
+  duel.avatar.setDead(duel.opponent.dead)
+  duel.avatar.update(dt)
+  ui.setOpponent(opponentStatus(match))
 }
 
 function updateMenuCamera(dt) {
@@ -605,7 +597,8 @@ window.addEventListener('resize', onResize)
 ui.bind({
   onStart: () => startGame(),
   onResume: () => resumeGame(),
-  onRestart: () => startGame(),
+  // 「重新开始 / 再来一次」沿用当前模式：决斗打到一半重开，不该掉进单人局
+  onRestart: () => startGame(match.mode),
   onMenu: () => toMenu(),
   onPause: () => pauseGame(),
   onMute: () => {
@@ -622,6 +615,18 @@ ui.bind({
   }
 })
 
+// 准备页的「双人对战」入口。ui.js 只管菜单/HUD/暂停/结算四屏，
+// 对战屏由 net-panel.js 自己负责，所以这个按钮在这里绑
+const btnNet = document.getElementById('btn-net')
+if (btnNet) {
+  btnNet.onclick = () => {
+    audio.init()
+    audio.uiClick()
+    ui.showScreen('net')
+    netPanel.open()
+  }
+}
+
 ui.setMuteButtons(false)
 ui.setSelectedWeapon(selectedWeapon)
 onResize()
@@ -636,40 +641,74 @@ requestAnimationFrame(frame)
 if (import.meta.env.DEV) {
   window.__PAPER_STRIKE__ = {
     state: () => state,
-    snapshot: () => ({
-      state,
-      compatMode,
-      health: player.health,
-      ammo: { smg: weaponState.weapons.smg.ammo, sniper: weaponState.weapons.sniper.ammo },
-      current: weaponState.current,
-      enemiesAlive: enemyManager.aliveCount,
-      kills: stats.kills,
-      shots: stats.shots,
-      hits: stats.hits,
-      time: elapsed,
-      reloading: isReloading(weaponState),
-      playerPos: [player.position.x, player.position.y, player.position.z],
-      enemyStates: enemyManager.enemies.map((e) => ({ s: e.state, a: e.alive, x: +e.position.x.toFixed(2), z: +e.position.z.toFixed(2) })),
-      fov: camera.fov,
-      ads: player.ads,
-      weaponVisible: weaponView.models[weaponState.current].visible,
-      drawCalls: renderer.info.render.calls,
-      triangles: renderer.info.render.triangles
-    }),
+    snapshot: () => {
+      const ws = loadout.weaponState
+      return {
+        state,
+        mode: match.mode,
+        compatMode,
+        health: player.health,
+        ammo: { smg: ws.weapons.smg.ammo, sniper: ws.weapons.sniper.ammo },
+        current: ws.current,
+        enemiesAlive: enemyManager.aliveCount,
+        kills: loadout.stats.kills,
+        shots: loadout.stats.shots,
+        hits: loadout.stats.hits,
+        time: elapsed,
+        reloading: isReloading(ws),
+        playerPos: [player.position.x, player.position.y, player.position.z],
+        enemyStates: enemyManager.enemies.map((e) => ({ s: e.state, a: e.alive, x: +e.position.x.toFixed(2), z: +e.position.z.toFixed(2) })),
+        opponent: duel.opponent
+          ? {
+              name: duel.opponent.name,
+              hp: duel.opponent.health,
+              alive: duel.opponent.alive,
+              x: +duel.opponent.position.x.toFixed(2),
+              z: +duel.opponent.position.z.toFixed(2),
+              hasAvatar: !!duel.avatar
+            }
+          : null,
+        fov: camera.fov,
+        ads: player.ads,
+        weaponVisible: weaponView.models[ws.current].visible,
+        drawCalls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles
+      }
+    },
     start: () => startGame(),
+    /**
+     * 决斗入口 —— 只存在于开发构建。
+     * 准备页上已经有「双人对战」按钮走真实路径了，保留这个钩子是为了让验收脚本
+     * 能直接起局（不用先跑一遍整套邀请码交换）。
+     * 不带参数默认单人，方便一条命令来回切模式验证 setSpawns 的重建。
+     */
+    startDuel: () => startGame(MODE.DUEL),
+    /** 打开对战面板。必须走 netPanel.open()，只切屏会让面板停在上一次的状态上 */
+    showNet: () => { ui.showScreen('net'); netPanel.open() },
+    netPanel,
+    faceOpponent: () => {
+      const foe = duel.opponent
+      if (!foe) return null
+      const dx = foe.position.x - player.position.x
+      const dz = foe.position.z - player.position.z
+      player.yaw = Math.atan2(-dx, -dz)
+      const dy = foe.position.y + 1.2 - (player.position.y + player.eyeHeight)
+      player.pitch = Math.atan2(dy, Math.hypot(dx, dz))
+      return { dx, dz, dist: Math.hypot(dx, dz) }
+    },
     look: (yaw, pitch) => { player.yaw = yaw; player.pitch = pitch },
     teleport: (x, z, y = 0) => { player.position.set(x, y, z); player.velocity.set(0, 0, 0) },
-    press: (code, down = true) => { if (down) pressed.add(code); else pressed.delete(code) },
-    setAds: (on) => { adsHeld = !!on },
-    setFire: (on) => { shootHeld = !!on; if (on) shootPressed = true },
-    fireOnce: () => { shootPressed = true; shootHeld = false },
-    reload: () => startReload(weaponState),
+    press: (code, down = true) => input.setKey(code, down),
+    setAds: (on) => input.setAds(on),
+    setFire: (on) => { if (on) input.pressFire(); else input.releaseFire() },
+    fireOnce: () => { input.pressFire(); input.releaseFire() },
+    reload: () => startReload(loadout.weaponState),
     switchTo: (id) => selectWeapon(id),
     killEnemies: (n) => {
       let left = n
       for (const e of enemyManager.enemies) {
         if (left <= 0) break
-        if (e.alive) { e.takeDamage(1000); stats.kills++; left-- }
+        if (e.alive) { e.takeDamage(1000); loadout.stats.kills++; left-- }
       }
       ui.setEnemies(enemyManager.aliveCount)
     },
@@ -696,8 +735,8 @@ if (import.meta.env.DEV) {
       const dz = e.position.z - player.position.z
       player.yaw = Math.atan2(-dx, -dz)
       player.pitch = Math.atan2(e.position.y + 1.35 - (player.position.y + player.eyeHeight), Math.hypot(dx, dz))
-      recoilPitch = 0
-      recoilVel = 0
+      loadout.recoilPitch = 0
+      loadout.recoilVel = 0
       return { x: player.position.x, z: player.position.z }
     },
     birdseye: (x = 2, y = 34, z = 40, tx = 0, tz = -6) => {
@@ -712,6 +751,8 @@ if (import.meta.env.DEV) {
     world,
     player,
     enemyManager,
-    weaponState
+    match,
+    loadout,
+    weaponState: loadout.weaponState
   }
 }

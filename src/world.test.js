@@ -2,10 +2,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ARENA, PLAYER_SPAWN, ENEMY_SPAWNS, PHYS,
+  ARENA, PLAYER_SPAWN, ENEMY_SPAWNS, DUEL_SPAWNS, PHYS,
   buildLevel, buildNavGraph, surfaceHeightAt, supportHeightAt, capsuleBlocked, segmentClear,
   nearestNode, findPath, smoothPath
 } from './world.js'
+import { hasLineOfSight } from './combat.js'
 
 const level = buildLevel()
 const nav = buildNavGraph(level.solids)
@@ -45,6 +46,61 @@ test('八个敌人出生点都合法且不与掩体重叠', () => {
       false,
       '出生点 ' + s.x + ',' + s.z + ' 不应卡在掩体里'
     )
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 双人对战的出生点
+// ---------------------------------------------------------------------------
+test('两个决斗出生点都在场地内、站在平地上、没有卡进掩体', () => {
+  assert.equal(DUEL_SPAWNS.length, 2)
+  for (const s of DUEL_SPAWNS) {
+    assert.ok(s.x > ARENA.minX && s.x < ARENA.maxX && s.z > ARENA.minZ && s.z < ARENA.maxZ, '出生点在场地内')
+    const ground = supportHeightAt(level.solids, s.x, s.z, 6, PHYS.stepHeight, PHYS.playerRadius)
+    assert.ok(Math.abs(ground) < 1e-6, '出生点 ' + s.x + ',' + s.z + ' 应当站在地面高度 0，实际 ' + ground)
+    assert.equal(
+      capsuleBlocked(level.solids, s.x, s.z, ground, PHYS.playerRadius, PHYS.playerHeight, PHYS.stepHeight),
+      false,
+      '出生点 ' + s.x + ',' + s.z + ' 不应卡在实体里'
+    )
+  }
+})
+
+test('两个决斗出生点关于场地中心点对称，保证双方公平', () => {
+  const [a, b] = DUEL_SPAWNS
+  assert.ok(Math.abs(a.x + b.x) < 1e-9, 'x 应互为相反数')
+  assert.ok(Math.abs(a.z + b.z) < 1e-9, 'z 应互为相反数')
+  const dist = Math.hypot(b.x - a.x, b.z - a.z)
+  assert.ok(dist > 25 && dist < 45, '间距应在可交战范围内，实际 ' + dist.toFixed(1) + ' 米')
+})
+
+test('开局两人互相看不见 —— 否则一出生就是互狙', () => {
+  const [a, b] = DUEL_SPAWNS
+  const eyeA = { x: a.x, y: a.y + PHYS.playerEye, z: a.z }
+  const eyeB = { x: b.x, y: b.y + PHYS.playerEye, z: b.z }
+  assert.equal(hasLineOfSight(level.solids, eyeA, eyeB), false, '两个出生点之间不应有直线视线')
+})
+
+test('两个决斗出生点能互相走到', () => {
+  const [a, b] = DUEL_SPAWNS
+  const na = nearestNode(nav, a.x, a.z, { maxDist: 5 })
+  const nb = nearestNode(nav, b.x, b.z, { maxDist: 5 })
+  assert.ok(na >= 0 && nb >= 0, '两个出生点附近都要有导航节点')
+  assert.ok(nav.mainComponent.includes(na) && nav.mainComponent.includes(nb), '都要在导航主体内')
+  assert.ok(findPath(nav, na, nb), '应当存在一条通路')
+})
+
+test('两个决斗出生点的朝向都正对彼此', () => {
+  const [a, b] = DUEL_SPAWNS
+  // 游戏约定 forward = (-sin(yaw), -cos(yaw))，见 player.js forwardVector
+  for (const [from, to] of [[a, b], [b, a]]) {
+    const fx = -Math.sin(from.yaw)
+    const fz = -Math.cos(from.yaw)
+    const dx = to.x - from.x
+    const dz = to.z - from.z
+    const len = Math.hypot(dx, dz)
+    const dot = (fx * dx + fz * dz) / len
+    assert.ok(dot > 0.9999, '朝向应几乎正对对面，实际 cos=' + dot)
   }
 })
 

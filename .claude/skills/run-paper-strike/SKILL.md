@@ -1,11 +1,11 @@
 ---
 name: run-paper-strike
-description: 启动并驱动《纸上交锋 · PAPER STRIKE》这个 Vite + Three.js 网页 3D 射击 Demo —— 起开发服务器，再用仓库自带的 CDP 验收脚本跑通 29 项断言并产出整套截图，必要时再用真实浏览器手打一轮。凡是用户说「启动 / 跑起来 / 开一下 / 看看现在什么效果 / 验收一下 / 截个图 / 改完确认一下」并且指向本仓库，或者改了代码要验证游戏画面与交互是否还正常，都应当使用本技能。不要临场重新摸索启动方式：本仓库自带免依赖的 CDP 验收脚本和一套开发钩子 API，不需要装 Playwright 或任何其它浏览器自动化工具。
+description: 启动并驱动《纸上交锋 · PAPER STRIKE》这个 Vite + Three.js 网页 3D 射击 Demo —— 起开发服务器，再用仓库自带的 CDP 验收脚本跑通 37 项断言并产出整套截图，必要时再用真实浏览器手打一轮。凡是用户说「启动 / 跑起来 / 开一下 / 看看现在什么效果 / 验收一下 / 截个图 / 改完确认一下」并且指向本仓库，或者改了代码要验证游戏画面与交互是否还正常，都应当使用本技能。不要临场重新摸索启动方式：本仓库自带免依赖的 CDP 验收脚本和一套开发钩子 API，不需要装 Playwright 或任何其它浏览器自动化工具。
 ---
 
 # 纸上交锋 · PAPER STRIKE —— 启动与验收
 
-一个单人、单关卡的网页 3D 第一人称射击 Demo（Three.js 0.186 + Vite 8，原生 ES Modules，无 UI 框架）。
+一个支持同局域网 1v1 对战的网页 3D 第一人称射击 Demo（Three.js 0.186 + Vite 8，原生 ES Modules，无 UI 框架）。
 纯前端，没有后端、API key 或环境变量。
 
 **「跑起来」有三层，先想清楚这次要哪一层：**
@@ -13,12 +13,15 @@ description: 启动并驱动《纸上交锋 · PAPER STRIKE》这个 Vite + Thre
 | 层 | 手段 | 能证明什么 | 不能证明什么 | 耗时 |
 | :--- | :--- | :--- | :--- | :--- |
 | A. 服务器 | `npm run dev` | 入口能解析 | 几乎什么都不能 | 秒级 |
-| B. 脚本化驱动 | `node tests/browser-qa.js` | 29 项断言：战斗逻辑、HUD、胜负分支、几何、控制台无错 | 画面好不好看（要看截图）、真鼠标能否通关 | ~1 分 40 秒 |
+| B. 脚本化驱动 | `node tests/browser-qa.js` | 37 项断言：战斗逻辑、HUD、胜负分支、几何、对战模式、离线保证、控制台无错 | 画面好不好看（要看截图）、真鼠标能否通关 | ~2 分钟 |
+| B2. 双实例联机 | `node tests/net-qa.js` | 28 项断言：两个标签页建链、邀请码容错、面板全流程 | 跨机器 / 跨防火墙的真实连通性 | ~1 分钟 |
 | C. 真实浏览器手打 | playwright-cli + 开发钩子 | 真实输入路径、手感、视觉 | 无自动化回归价值 | 分钟级 |
 
 **默认做 A + B**，然后**读 `artifacts/` 里的截图**。
 如果这次改动碰了**输入 / 指针锁定 / 渲染循环**，或用户明说「确认交互正常」，**必须加做 C** ——
 B 的断言走的是钩子注入，碰不到真实事件路径。
+如果改动碰了 **`src/net/` 或 `src/net-panel.js`**，**必须加做 B2** ——
+B 只有单实例，看不见任何联机问题。B2 不需要第二台机器，两个标签页就够。
 
 ---
 
@@ -60,8 +63,8 @@ npm run dev                            # 后台运行
 node tests/browser-qa.js http://127.0.0.1:5173/ artifacts
 ```
 
-**29 项断言** + 13 张截图 + `qa-report.json` 落到 `artifacts/`（已 gitignore，不脏工作区）。
-**耗时约 1 分 40 秒**（无头软渲染只有 ~16 FPS，13 张截图要一张张等），别以为卡死了。
+**37 项断言** + 16 张截图 + `qa-report.json` 落到 `artifacts/`（已 gitignore，不脏工作区）。
+**耗时约 2 分钟**（无头软渲染只有 ~16 FPS，16 张截图要一张张等），别以为卡死了。
 
 实测输出形如（**数字仅供参考，每次跑会有出入，别把差异当回归**）：
 
@@ -78,10 +81,16 @@ node tests/browser-qa.js http://127.0.0.1:5173/ artifacts
 ✔ 胜利结算页出现
 ✔ 重开恢复初始状态  {"k":0,"hp":100,"e":8}
 ✔ 玩家血量归零触发失败  defeat hp=0
+✔ 小窗口下 HUD 控件不互相遮挡  {"bad":false,"w":960}
+✔ 决斗场地清空且双方各就各位  {"mode":"duel","e":0,...}
+✔ 决斗 HUD 用对手血条换掉敌人计数
+✔ 击倒对手即判决斗胜利  {"state":"victory",...}
+✔ 切回单人后敌人重建、HUD 与 match 的引用全部复位
 ✔ 场景几何体没有 NaN 顶点  []
+✔ 全程没有实例化 RTCPeerConnection（单人模式仍然完全离线）  count=0
 ✔ 控制台没有错误
 ...
-通过 29/29
+通过 37/37
 ```
 
 ### 一定要看截图
@@ -100,6 +109,9 @@ node tests/browser-qa.js http://127.0.0.1:5173/ artifacts
 | `07-pause.png` | 暂停 |
 | `09-small-window.png` | 960px 窄窗下的 HUD |
 | `10-webgl-error.png` | 禁用 WebGL 的错误分支 |
+| `11-duel-hud.png` | 决斗模式的 HUD（空场地 + 右上角对手血条） |
+| `12-duel-victory.png` | 决斗胜利结算 |
+| `13-net-panel.png` | 对战面板（真信令已经接上） |
 
 **空白帧 = 启动失败**，不要当成通过。
 
@@ -115,8 +127,10 @@ npm run preview          # 另开终端保持运行，默认 4173
 node tests/browser-qa.js http://127.0.0.1:4173/ artifacts --prod
 ```
 
-`--prod` 跑 7 项断言：页面能进、WebGL 上下文可用、**无开发钩子入口**、无控制台错误、
-资源无 HTTP 错误、无跨源第三方请求。
+`--prod` 跑 9 项断言：页面能进、WebGL 上下文可用、**无开发钩子入口**、无控制台错误、
+资源无 HTTP 错误、无跨源第三方请求，以及在优化构建里打开对战面板并生成一个邀请码
+（`PS1-` 开头）——最后这一条是为了确认**生产构建里联机代码也真的能用**，
+而不是被 tree-shaking 顺手摇掉了。
 
 ---
 
@@ -187,14 +201,14 @@ keydown w + sleep + keyup w → [0,0,19] → [0,0,16.48]   正常前进
 
 ### 开发钩子 API（`window.__PAPER_STRIKE__`，仅 dev 构建）
 
-定义在 `src/main.js:633`，被 `import.meta.env.DEV` 包着，**生产构建会被移除**。
-共 **21 个键**，这是确认「交互是否正常」最锋利的工具，`browser-qa.js` 自己也在用：
+定义在 `src/main.js` 末尾，被 `import.meta.env.DEV` 包着，**生产构建会被移除**。
+共 **27 个键**，这是确认「交互是否正常」最锋利的工具，`browser-qa.js` 自己也在用：
 
 | 方法 | 作用 |
 | :--- | :--- |
 | `snapshot()` | **最常用**。见下方字段表 |
 | `state()` | 只要 `'menu' / 'playing' / 'paused' / 'victory' / 'defeat'` |
-| `player` / `world` / `enemyManager` / `weaponState` | **直接暴露的活对象，可读**。`player.yaw` / `player.pitch` / `player.position` 是严格验证鼠标观察的唯一可靠手段（截图哈希不行，见下） |
+| `player` / `world` / `enemyManager` / `match` / `loadout` / `weaponState` | **直接暴露的活对象，可读**。`player.yaw` / `player.pitch` / `player.position` 是严格验证鼠标观察的唯一可靠手段（截图哈希不行，见下）。`loadout` 是本地持枪者的武器/后坐/统计，`weaponState` 是它的 `.weaponState` 别名 |
 | `setGodMode(on)` | 关掉玩家受伤 |
 | `teleport(x, z, y=0)` | 传送到坐标 |
 | `faceEnemy(i=0)` | 视角对准第 i 个敌人 |
@@ -204,14 +218,22 @@ keydown w + sleep + keyup w → [0,0,19] → [0,0,16.48]   正常前进
 | `fireOnce()` / `setFire(on)` / `setAds(on)` | 不开枪地测射击 / ADS 状态 |
 | `reload()` | 触发换弹 |
 | `killEnemies(n)` | 直接结算 n 个，快速走到胜利分支 |
+| `startDuel()` | **开一局决斗**（空场地 + 一个站着不动的本地陪练）。准备页上已经有「双人对战」走真实路径了，留着它是为了让验收脚本**不必先跑完整套邀请码交换**就能直接起局 |
+| `faceOpponent()` | 视角对准决斗对手；返回 `{dx, dz, dist}`。没有对手时返回 `null` |
+| `showNet()` | 打开「双人对战」面板。**必须走 `netPanel.open()`** —— 只 `ui.showScreen('net')` 会让面板停在上一次的状态上 |
+| `netPanel` | 面板对象本体：`{ open, close, transport, isLinked, dispose }`。**`isLinked` 是判断「链是否真的通了」的唯一入口**，比看屏上的文字可靠 |
 | `start()` / `setState(s)` / `press(code, down)` / `look(yaw, pitch)` | 底层状态注入（`look` 是**写**视角，读视角用 `player.yaw`） |
 
-`snapshot()` 返回 18 个字段：
+`snapshot()` 返回 20 个字段：
 
 ```
-state, compatMode, health, ammo{smg,sniper}, current, enemiesAlive, kills, shots, hits,
-time, reloading, playerPos, enemyStates[], fov, ads, weaponVisible, drawCalls, triangles
+state, mode, compatMode, health, ammo{smg,sniper}, current, enemiesAlive, kills, shots, hits,
+time, reloading, playerPos, enemyStates[], opponent|null, fov, ads, weaponVisible,
+drawCalls, triangles
 ```
+
+`mode` 是 `'solo'` / `'duel'`；决斗时 `enemyStates` 恒为 `[]`、`opponent` 为
+`{name, hp, alive, x, z, hasAvatar}`，单人时 `opponent` 为 `null`。
 
 **`compatMode` 别忽略** —— 它决定走不走指针锁定兼容分支（`src/main.js:82 / 113 / 143 / 154 / 177 / 207`
 全是它的分支）。改动指针锁定 / 输入时，这是第一个该看的字段。
@@ -259,8 +281,14 @@ playwright-cli eval "window.__PAPER_STRIKE__.player.yaw.toFixed(4)"   # 转鼠�
 `hits` 低是**瞄准与遮挡**问题（纸板敌人会移动、掩体多），**与输入路径无关**。
 排查输入相关改动时不要被这个数字带偏。
 
-仍然成立的边界：`browser-qa.js` 用钩子直接设位置、直接结算胜负，它的 29 项断言
+仍然成立的边界：`browser-qa.js` 用钩子直接设位置、直接结算胜负，它的 37 项断言
 **不等同于完整清场一次**；「真鼠标从头到尾打通关」没有被自动化覆盖，别在报告里说成已验证。
+决斗那几条同理 —— 它们走的是 `startDuel()` 钩子，**不等于两人各坐一台电脑真打一局**。
+
+联机那 28 项同理，而且它的边界更值得说清楚：`net-qa.js` 跑的是**同一台机器上的两个标签页**，
+连的还是 `127.0.0.1`。它证明的是「代码路径是通的」，**不证明跨机器、跨防火墙、mDNS 环境下能连上**。
+唯一能证明后者的办法是两台电脑真连一次（`npm run dev:lan` + 手机热点/同一路由器）。
+**别拿 B2 全绿去回答「能联机吗」这个问题。**
 
 ---
 
@@ -276,6 +304,16 @@ playwright-cli eval "window.__PAPER_STRIKE__.player.yaw.toFixed(4)"   # 转鼠�
   来自最后一项故意禁用 WebGL 的负向测试，不是回归。
 - **无头软件渲染约 16 FPS**（历史数据 8–10 FPS），是 SwiftShader 软渲染的锅，别据此下性能结论。
 - **暂停不是绝对静止**：暂停挡掉玩家操作与伤害结算，但敌人 AI 的完整冻结有已知状态传递边界。
+- **两个 CDP 脚本用的是不同端口**（`browser-qa` 9444 / `net-qa` 9445），**可以同时跑**。
+  但别把两条命令写在同一个终端前后台里 —— 各开一个终端。
+- **`net-qa.js` 必须带 `--disable-features=WebRtcHideLocalIpsWithMdns`**，脚本自己会加。
+  Chrome 默认把 host candidate 里的局域网 IP 换成随机 `.local` 域名，同机两个标签页经常解析不到，
+  表现为「拿到了候选但就是连不上」。**别把这个 flag 挪到 `browser-qa.js` 去**，那边不需要它。
+- **`net-qa.js` 报「这段文本不是有效的应战码」时，先怀疑折行位置**，别怀疑编码本身：
+  邀请码是 64 列折行的，如果 `-END` 正好被折行劈开、而聊天软件又在折行处插了引用符号，
+  后缀就会断成 `-` + `> ` + `END`。`signaling.test.js` 里有一条穷举每一个折行位置的回归测试。
+  这类 bug **是数据相关的**——同一段码有时能解有时不能，所以「跑一遍通过」不算数，
+  要连着跑几遍。
 - 首次 `npm install` 约 30 秒 / 16 个包。
 
 ## 清理
@@ -302,5 +340,7 @@ taskkill //PID <pid> //F
 ## 相关文档
 
 - `docs/TECHNICAL.md` —— 本地运行、部署、战斗数值、安全、验收方法、已知限制（权威来源）
-- `tests/browser-qa.js` —— 验收脚本本体，362 行，断言清单看这里
+- `tests/browser-qa.js` —— 单实例验收脚本本体，456 行，断言清单看这里
+- `tests/net-qa.js` —— 双标签页联机验收，476 行。**它跟 `browser-qa.js` 的 CDP 接法不一样**
+  （每个 tab 一条独立的页面级 WebSocket，而不是 `sessionId` 穿透），改之前先读它的头部注释
 - `README.md` —— 项目介绍与游玩说明

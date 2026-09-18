@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { rayBox, rayCylinder, rayEllipsoid, raycastSolids, raycastEnemies, resolveShot, hasLineOfSight, HEAD_HITBOX, BODY_HITBOX } from './combat.js'
-import { buildLevel, ENEMY_SPAWNS } from './world.js'
+import { rayBox, rayCylinder, rayEllipsoid, raycastSolids, raycastEnemies, resolveShot, hasLineOfSight, HEAD_HITBOX, BODY_HITBOX, HITBOX_PROFILES } from './combat.js'
+import { buildLevel, ENEMY_SPAWNS, PLAYER_SPAWN } from './world.js'
+import { Player } from './player.js'
 
 const level = buildLevel()
 const V = (x, y, z) => ({ x, y, z })
@@ -98,4 +99,87 @@ test('八个出生点的敌人都不会互相挡住判定', () => {
     const hit = raycastEnemies(origin, dir, enemies)
     if (hit) assert.equal(hit.enemy, enemies[i], '正前方首先命中的应该是自己')
   }
+})
+
+// ---------------------------------------------------------------------------
+// 多角色：玩家也要能被打中（双人对战的地基）
+// ---------------------------------------------------------------------------
+const duelWorld = { solids: level.solids, playerSpawn: PLAYER_SPAWN, nav: null }
+
+function makeRealPlayer(x, z, opts = {}) {
+  const p = new Player(duelWorld, opts)
+  p.reset({ x, y: 0, z, yaw: 0 })
+  return p
+}
+
+test('真实的 Player 可以作为射线目标被命中（靠 alive + position + hitProfile）', () => {
+  const p = makeRealPlayer(0, 0)
+  assert.equal(p.alive, true, 'alive 必须存在，否则 raycastTargets 会跳过它')
+  const shot = resolveShot(V(-4, 1.55, 0), V(1, 0, 0), { solids: [], targets: [p] })
+  assert.equal(shot.type, 'enemy')
+  assert.equal(shot.enemy, p)
+  assert.equal(shot.part, 'head')
+})
+
+test('targets 与 enemies 两个选项名等价（后者是兼容别名）', () => {
+  const p = makeRealPlayer(0, 0)
+  const viaTargets = resolveShot(V(-4, 1.55, 0), V(1, 0, 0), { solids: [], targets: [p] })
+  const viaEnemies = resolveShot(V(-4, 1.55, 0), V(1, 0, 0), { solids: [], enemies: [p] })
+  assert.equal(viaTargets.type, viaEnemies.type)
+  assert.equal(viaTargets.enemy, viaEnemies.enemy)
+})
+
+test('混合目标列表（敌人 + 玩家）取最近的那个', () => {
+  const near = makeEnemy(3, 0)
+  const far = makeRealPlayer(6, 0)
+  const shot = resolveShot(V(-4, 1.55, 0), V(1, 0, 0), { solids: [], targets: [far, near] })
+  assert.equal(shot.enemy, near, '顺序打乱也要取最近的')
+})
+
+test('墙后的玩家不会被击中', () => {
+  const wall = { kind: 'box', minX: 1, maxX: 1.4, minY: 0, maxY: 3, minZ: -1, maxZ: 1, x: 1.2, z: 0 }
+  const p = makeRealPlayer(1.5, 0)   // 站在墙后极近处
+  const shot = resolveShot(V(-4, 1.55, 0), V(1, 0, 0), { solids: [wall], targets: [p] })
+  assert.equal(shot.type, 'wall')
+})
+
+test('hitProfile 真的生效：同一发在两种档案下结果不同', () => {
+  // y=2.0 落在 enemy 头部椭球内（1.55±0.49），却在 player 头部椭球之上（1.62+0.26=1.88）
+  const asEnemy = makeRealPlayer(0, 0, { hitProfile: 'enemy' })
+  const asPlayer = makeRealPlayer(0, 0, { hitProfile: 'player' })
+  const origin = V(-4, 2.0, 0)
+  const dir = V(1, 0, 0)
+  assert.equal(resolveShot(origin, dir, { solids: [], targets: [asEnemy] }).part, 'head')
+  assert.equal(resolveShot(origin, dir, { solids: [], targets: [asPlayer] }).type, 'none')
+})
+
+test('被打死的玩家立即从可命中列表里消失', () => {
+  const p = makeRealPlayer(0, 0)
+  assert.equal(p.takeDamage(1000).died, true)
+  assert.equal(p.alive, false)
+  const shot = resolveShot(V(-4, 1.55, 0), V(1, 0, 0), { solids: [], targets: [p] })
+  assert.equal(shot.type, 'none', '死亡目标不该再挡住子弹')
+})
+
+test('Player.takeDamage 的返回结构与 Enemy.takeDamage 逐字段一致', () => {
+  // Enemy.takeDamage（enemies.js:342/350）返回的就是 { died, damage, part }；
+  // 这里对着字面量断言，Match 才能用同一个结算入口处理两种角色。
+  const p = makeRealPlayer(0, 0)
+  assert.deepEqual(p.takeDamage(30, 'body'), { died: false, damage: 30, part: 'body' })
+  assert.deepEqual(p.takeDamage(200, 'head'), { died: true, damage: 70, part: 'head' })
+  assert.deepEqual(p.takeDamage(10), { died: false, damage: 0, part: 'body' }, '死后不再掉血')
+})
+
+test('applyDamage 旧接口的返回值保持为数字（player.test.js 依赖的语义）', () => {
+  const p = makeRealPlayer(0, 0)
+  assert.equal(p.applyDamage(30), 30)
+  assert.equal(p.applyDamage(200), 70, '超出剩余血量时只返回实际扣掉的部分')
+  assert.equal(p.applyDamage(10), 0)
+})
+
+test('命中档案：player 档案比 enemy 档案更贴合 1.8 米的玩家体型', () => {
+  assert.equal(HEAD_HITBOX, HITBOX_PROFILES.enemy.head, '旧常量必须仍指向 enemy 档案')
+  assert.equal(BODY_HITBOX, HITBOX_PROFILES.enemy.body)
+  assert.ok(HITBOX_PROFILES.player.head.ry < HITBOX_PROFILES.enemy.head.ry)
+  assert.ok(HITBOX_PROFILES.player.body.ry > HITBOX_PROFILES.enemy.body.ry)
 })

@@ -7,6 +7,7 @@ export class UI {
       hud: $('hud'),
       pause: $('pause'),
       result: $('result'),
+      net: $('net'),
       webglError: $('webgl-error'),
       webglErrorText: $('webgl-error-text'),
       lockHint: $('lock-hint'),
@@ -22,6 +23,12 @@ export class UI {
       muteMenu: $('btn-mute-menu'),
       enemiesLeft: $('enemies-left'),
       pips: $('progress-pips'),
+      missionName: document.querySelector('#hud .mission-name'),
+      missionCount: document.querySelector('#hud .mission-count'),
+      opponentLine: $('opponent-line'),
+      opponentName: $('opponent-name'),
+      opponentHp: $('opponent-hp'),
+      netBack: $('btn-net-back'),
       timer: $('hud-timer'),
       status: $('hud-status'),
       hpNumber: $('hp-number'),
@@ -75,7 +82,40 @@ export class UI {
     this.el.hud.classList.toggle('hidden', name !== 'hud')
     this.el.pause.classList.toggle('hidden', name !== 'pause')
     this.el.result.classList.toggle('hidden', name !== 'result')
+    this.el.net.classList.toggle('hidden', name !== 'net')
     this.el.webglError.classList.toggle('hidden', name !== 'error')
+  }
+
+  /**
+   * 切换 HUD 的任务栏形态。
+   * SOLO 显示「剩几名敌人 + 进度格」，DUEL 这些没有意义（场地是空的），
+   * 换成右上角的对手血条 —— 不去动 HUD 的四角布局，加第五个角必然要在小窗口重排。
+   */
+  setMode(mode) {
+    if (this.last.mode === mode) return
+    this.last.mode = mode
+    const duel = mode === 'duel'
+    if (this.el.missionName) this.el.missionName.textContent = duel ? '决斗 · 日光街区' : '任务 · 日光街区'
+    if (this.el.missionCount) this.el.missionCount.classList.toggle('hidden', duel)
+    this.el.pips.classList.toggle('hidden', duel)
+    if (!duel) this.setOpponent(null)
+  }
+
+  /** 对手状态。传 null 隐藏；对手倒下时仍然显示，只是把血量换成「已击倒」 */
+  setOpponent(info) {
+    if (!info) {
+      if (this.last.opponent === null) return
+      this.last.opponent = null
+      this.el.opponentLine.classList.add('hidden')
+      return
+    }
+    const key = info.id + '/' + info.hp + '/' + info.alive
+    if (this.last.opponent === key) return
+    this.last.opponent = key
+    this.el.opponentLine.classList.remove('hidden')
+    if (this.el.opponentName) this.el.opponentName.textContent = info.name
+    this.el.opponentHp.textContent = info.alive ? String(Math.max(0, Math.round(info.hp))) : '已击倒'
+    this.el.opponentHp.classList.toggle('is-down', !info.alive)
   }
 
   showWebglError(text) {
@@ -209,11 +249,12 @@ export class UI {
     }
   }
 
-  showResult({ win, kills, time, accuracy, hits, shots }) {
-    this.el.resultTitle.textContent = win ? '任务完成！' : '演习失败'
-    this.el.resultSub.textContent = win
-      ? '日光街区已经清空，纸板小兵全部退场。'
-      : '生命值归零，本次演习结束。再来一次吧。'
+  showResult({ win, kills, time, accuracy, hits, shots, mode = 'solo' }) {
+    const duel = mode === 'duel'
+    this.el.resultTitle.textContent = duel ? (win ? '决斗胜利！' : '你被击倒了') : win ? '任务完成！' : '演习失败'
+    this.el.resultSub.textContent = duel
+      ? win ? '对手已倒下，这场决斗归你。' : '对手先一步命中。再来一局吧。'
+      : win ? '日光街区已经清空，纸板小兵全部退场。' : '生命值归零，本次演习结束。再来一次吧。'
     this.el.resultKills.textContent = String(kills)
     this.el.resultTime.textContent = time
     this.el.resultAcc.textContent = Math.round(accuracy * 100) + '%'
@@ -254,6 +295,8 @@ export class UI {
     this.el.again.addEventListener('click', () => h.onRestart())
     this.el.resultMenu.addEventListener('click', () => h.onMenu())
     this.el.pauseBtn.addEventListener('click', () => h.onPause())
+    // #net 屏的按钮一律由 net-panel.js 自己绑 —— 它才是那一屏的主人。
+    // 这里再绑一次会变成两套机制同时生效，一次点击跑两遍回调
     this.el.muteBtn.addEventListener('click', () => h.onMute())
     this.el.muteMenu.addEventListener('click', () => h.onMute())
     for (const card of this.el.loadoutCards) {
