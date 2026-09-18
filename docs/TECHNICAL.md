@@ -19,7 +19,7 @@
 推荐 **Node.js 24 + npm**，版本提示见 `.node-version`。Vite 要求 Node `^20.19.0 || >=22.12.0`；浏览器验收脚本使用全局 WebSocket，建议直接用 Node 24。
 
 ```bash
-git clone https://github.com/moeyui1/CS-on-paper.git
+git clone https://github.com/king001gg/CS-on-paper.git
 cd CS-on-paper
 npm ci
 npm run dev

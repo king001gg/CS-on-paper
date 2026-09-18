@@ -1,9 +1,9 @@
 {
   "name": "paper-strike",
   "private": true,
-  "repository": { "type": "git", "url": "https://github.com/moeyui1/CS-on-paper.git" },
-  "homepage": "https://moeyui1.github.io/CS-on-paper/",
-  "bugs": { "url": "https://github.com/moeyui1/CS-on-paper/issues" },
+  "repository": { "type": "git", "url": "https://github.com/king001gg/CS-on-paper.git" },
+  "homepage": "https://github.com/king001gg/CS-on-paper",
+  "bugs": { "url": "https://github.com/king001gg/CS-on-paper/issues" },
   "version": "1.0.0",
   "type": "module",
   "description": "纸上交锋 · PAPER STRIKE —— 粗糙手绘草图风格的 3D 第一人称射击 Demo（Three.js + Vite）",
