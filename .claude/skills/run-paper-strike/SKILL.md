@@ -314,6 +314,14 @@ playwright-cli eval "window.__PAPER_STRIKE__.player.yaw.toFixed(4)"   # 转鼠�
   后缀就会断成 `-` + `> ` + `END`。`signaling.test.js` 里有一条穷举每一个折行位置的回归测试。
   这类 bug **是数据相关的**——同一段码有时能解有时不能，所以「跑一遍通过」不算数，
   要连着跑几遍。
+- **准备页的按钮在启动完成前是 `disabled` 的**，`main.js` 绑完事件才解禁。
+  C 层手测时如果 `open` 之后立刻 `click`，可能点在还没解禁的按钮上——**不报错，只是没反应**，
+  跟「左键静默失效」是同一类现象。稳妥做法是先 `eval` 一下
+  `document.getElementById('btn-start').disabled`，等到 `false` 再点。
+  线上 Pages 冷启动实测约 9 秒才解禁（本地 dev 约 0.6 秒），别按本地的直觉估时间。
+- **别用固定 sleep 等页面就绪**。`browser-qa.js` 早先写死 `sleep(3500)`，本地够用，
+  对线上 Pages 却在按钮绑定之前就点了下去——生产冒烟因此稳定假失败一项。
+  现在改为轮询 `#btn-start` 的 `disabled`。自己写临时脚本时照做。
 - 首次 `npm install` 约 30 秒 / 16 个包。
 
 ## 清理
@@ -340,7 +348,7 @@ taskkill //PID <pid> //F
 ## 相关文档
 
 - `docs/TECHNICAL.md` —— 本地运行、部署、战斗数值、安全、验收方法、已知限制（权威来源）
-- `tests/browser-qa.js` —— 单实例验收脚本本体，456 行，断言清单看这里
+- `tests/browser-qa.js` —— 单实例验收脚本本体，469 行，断言清单看这里
 - `tests/net-qa.js` —— 双标签页联机验收，476 行。**它跟 `browser-qa.js` 的 CDP 接法不一样**
   （每个 tab 一条独立的页面级 WebSocket，而不是 `sessionId` 穿透），改之前先读它的头部注释
 - `README.md` —— 项目介绍与游玩说明

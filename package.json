@@ -2,7 +2,7 @@
   "name": "paper-strike",
   "private": true,
   "repository": { "type": "git", "url": "https://github.com/king001gg/CS-on-paper.git" },
-  "homepage": "https://github.com/king001gg/CS-on-paper",
+  "homepage": "https://king001gg.github.io/CS-on-paper/",
   "bugs": { "url": "https://github.com/king001gg/CS-on-paper/issues" },
   "version": "1.0.0",
   "type": "module",

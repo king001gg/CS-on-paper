@@ -29,8 +29,11 @@
             <li>按住右键瞄准，狙击枪有 4 倍镜</li>
             <li>善用木箱、矮墙与东侧高台</li>
           </ul>
-          <button id="btn-start" class="btn-primary">进入训练场</button>
-          <button id="btn-net" class="btn-secondary">双人对战</button>
+          <!-- 准备页的五个控件一律先 disabled，main.js 绑完事件才解禁。
+               bundle 要下载、贴图与关卡要同步构建，冷启动时这段时间有数秒；
+               这段时间里按钮虽然在屏幕上，点了却什么都不会发生。 -->
+          <button id="btn-start" class="btn-primary" disabled>进入训练场</button>
+          <button id="btn-net" class="btn-secondary" disabled>双人对战</button>
           <p class="menu-hint">点击开始会请求鼠标锁定，按 <kbd>Esc</kbd> 随时暂停</p>
         </div>
 
@@ -39,7 +42,7 @@
           <div class="loadout paper-panel">
             <div class="loadout-title">开场装备</div>
             <div class="loadout-cards">
-              <button class="loadout-card is-active" data-weapon="smg">
+              <button class="loadout-card is-active" data-weapon="smg" disabled>
                 <svg viewBox="0 0 96 48" class="gun-svg" aria-hidden="true">
                   <rect x="30" y="18" width="34" height="12" rx="2" fill="#E8D3A9" stroke="#293331" stroke-width="2.4" />
                   <rect x="14" y="21" width="18" height="6" rx="2" fill="#659A99" stroke="#293331" stroke-width="2.2" />
@@ -51,7 +54,7 @@
                 <span class="card-name">蜂鸟 · 冲锋枪</span>
                 <span class="card-meta">连射 · 30 发 · 20 伤害</span>
               </button>
-              <button class="loadout-card" data-weapon="sniper">
+              <button class="loadout-card" data-weapon="sniper" disabled>
                 <svg viewBox="0 0 96 48" class="gun-svg" aria-hidden="true">
                   <rect x="34" y="20" width="30" height="10" rx="2" fill="#E8D3A9" stroke="#293331" stroke-width="2.4" />
                   <rect x="8" y="22" width="26" height="5" rx="2" fill="#659A99" stroke="#293331" stroke-width="2.2" />
@@ -70,7 +73,7 @@
         <div class="menu-bottom paper-tag">
           <b>操作</b> WASD 移动 · 鼠标观察 · 左键射击 · 右键瞄准 · Space 跳跃 · R 换弹 · 1/2 切枪 · Esc 暂停
         </div>
-        <button id="btn-mute-menu" class="mute-btn" title="音效开关">音效 开</button>
+        <button id="btn-mute-menu" class="mute-btn" title="音效开关" disabled>音效 开</button>
       </section>
 
       <!-- ================= HUD ================= -->

@@ -4,9 +4,10 @@
 
 **纸板枪、大头小豆人与涂鸦街区。**
 
-[![GitHub](https://img.shields.io/badge/GITHUB-king001gg%2FCS--on--paper-E66B43?style=flat-square)](https://github.com/king001gg/CS-on-paper)
+[![在线试玩](https://img.shields.io/badge/PLAY-ONLINE-E66B43?style=flat-square)](https://king001gg.github.io/CS-on-paper/)
+[![GitHub](https://img.shields.io/badge/GITHUB-king001gg%2FCS--on--paper-659A99?style=flat-square)](https://github.com/king001gg/CS-on-paper)
 
-[技术文档](docs/TECHNICAL.md) · [复刻 Prompt](RECREATE_PROMPT.md)
+[在线试玩 ↗](https://king001gg.github.io/CS-on-paper/) · [技术文档](docs/TECHNICAL.md) · [复刻 Prompt](RECREATE_PROMPT.md)
 
 </div>
 
@@ -16,7 +17,7 @@
 
 单人模式要清空 8 名 AI 敌人；也可以和**同一个局域网内的另一台电脑 1v1 决斗**——在准备页点「双人对战」，双方各复制一段邀请码发给对方即可，不经任何后端或第三方服务。
 
-本地运行：
+两台机器都打开 **[king001gg.github.io/CS-on-paper](https://king001gg.github.io/CS-on-paper/)** 即可对战（HTTPS 是安全上下文，复制按钮可用）。想在本地跑：
 
 ```bash
 npm ci
@@ -27,16 +28,16 @@ npm run dev          # 默认只监听 127.0.0.1
 
 ## 项目说明
 
-本仓库是 [moeyui1/CS-on-paper](https://github.com/moeyui1/CS-on-paper) 的 fork，由 **king001gg** 维护与扩展。原项目由 **Deepseek harness + deepseek v4.1 flash** 开发完成。
+本仓库基于 [moeyui1/CS-on-paper](https://github.com/moeyui1/CS-on-paper) 开发，由 **king001gg** 独立维护与扩展。原项目由 **Deepseek harness + deepseek v4.1 flash** 开发完成。
 
-本 fork 在原项目基础上加入：
+本仓库在原项目基础上加入：
 
 - **同局域网 1v1 对战**：手动复制粘贴邀请码建立 WebRTC 直连，零后端、零第三方服务，默认不向任何外部地址发请求。
 - 为支撑对战而做的多角色重构：输入采样、武器状态、胜负判定与角色注册从全局单例中拆出，逻辑模块可在无 DOM 环境下测试。
 - 重写 `RECREATE_PROMPT.md`，使其描述当前交付形态，而不是此前那套几乎未被实现的扩展设想。
 
 > [!NOTE]
-> 上游原项目已标注为「仅供参考，不再更新或维护」。本 fork 在其基础上继续扩展，两者的维护状态相互独立。
+> 上游原项目已标注为「仅供参考，不再更新或维护」。本仓库在其基础上继续扩展，两者的维护状态相互独立。
 
 **欢迎 Fork 本仓库**，根据自己的需求修改、扩展或继续完善。
 

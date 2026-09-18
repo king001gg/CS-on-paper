@@ -1,6 +1,6 @@
 # 技术文档 · PAPER STRIKE
 
-[返回项目介绍](../README.md) · [Prompt 参考](../RECREATE_PROMPT.md) · [部署记录](https://github.com/moeyui1/CS-on-paper/actions/workflows/pages.yml)
+[返回项目介绍](../README.md) · [Prompt 参考](../RECREATE_PROMPT.md) · [部署记录](https://github.com/king001gg/CS-on-paper/actions/workflows/pages.yml)
 
 > 项目已停止更新与维护。本文保留工程、部署、安全与验收细节，仅供学习、复现或自行 fork 参考，不代表后续维护承诺。
 
@@ -11,6 +11,7 @@
 - 敌人采用固定导航图与路径采样绕障，命中使用简化几何体判定；具体边界见下文“尚未确认与实现取舍”。
 - 支持**同局域网的 1v1 对战**，信令是手动复制粘贴一段邀请码，不经过任何后端或第三方服务；对局形式是空场地的单挑，那 8 名 AI 敌人只在单人模式下出现。
 - 页面只从当前站点获取构建资源，不请求第三方 CDN、分析服务或游戏后端。单人模式全程零外部请求，并且这一点由 `tests/browser-qa.js` 的一条断言守着（未打开对战面板时不实例化 `RTCPeerConnection`）。对战模式默认同样零外部请求，只有在使用者主动填入 STUN 地址时才会去连那台服务器。首次加载 GitHub Pages 需要网络；没有 Service Worker，不承诺断网后仍能刷新页面。
+- **准备页的控件在启动完成前是 `disabled` 的**。`main.js` 的模块体里，bundle 下载之后还有贴图生成、关卡构建、8 名敌人建模等同步工作，`ui.bind()` 在全部结束之后才执行——冷启动时这段有数秒（线上 Pages 实测约 9 秒，本地约 0.6 秒）。`index.html` 里把这五个控件写成 `disabled`，`main.js` 绑完事件再统一解禁，用户看到的是灰着的按钮而不是一个「点了没反应」的按钮。这也顺带给验收脚本提供了唯一的就绪信号（见下文浏览器验收）。
 
 以下文件路径及命令均以**仓库根目录**为基准。
 
@@ -61,7 +62,7 @@ npm run preview
 
 ## GitHub Pages 部署
 
-公开地址：**https://moeyui1.github.io/CS-on-paper/**
+公开地址：**https://king001gg.github.io/CS-on-paper/**
 
 工作流位于 [`.github/workflows/pages.yml`](../.github/workflows/pages.yml)：
 
@@ -180,10 +181,12 @@ node tests/browser-qa.js http://127.0.0.1:5173/ artifacts
 ```bash
 node tests/browser-qa.js http://127.0.0.1:4173/ artifacts --prod
 # 对公开 Pages 地址执行同样的生产冒烟检查
-node tests/browser-qa.js https://moeyui1.github.io/CS-on-paper/ artifacts/pages --prod
+node tests/browser-qa.js https://king001gg.github.io/CS-on-paper/ artifacts/pages --prod
 ```
 
 验收脚本默认查找 Windows 的标准 Chrome/Edge 安装位置；其它位置或 macOS/Linux 需通过 `PS_BROWSER` 指定浏览器可执行文件。`PS_CDP_PORT` 可覆盖调试端口，默认 9444。脚本只清理自身创建的临时浏览器 profile。
+
+脚本**不用固定 sleep 等页面就绪**，而是轮询 `#btn-start` 何时不再 `disabled`（即上面那条「准备页控件」的就绪信号）。这不是洁癖：早先写死 `sleep(3500)`，在本地 0.6 秒就绪时够用，对线上 Pages 却会在按钮绑上事件之前就点下去——合成点击落在没有监听器的按钮上**不报错、也不抛异常**，只表现为「点了没反应」，于是生产冒烟稳定地假失败一项。任何按固定时长等待页面就绪的验收脚本都会有这个毛病。
 
 既有开发验收流程包含 **37 项断言**，生产冒烟流程包含 **9 项断言**，生成截图与 JSON 报告到指定输出目录（不入 Git）。开发流程使用开发钩子设置位置/状态、触发部分胜负条件；这验证的是相关功能路径，**不等同于通过真实鼠标操作完整清场一次**。其中 7 项覆盖决斗模式（空场地、出生点、对手血条、击倒判胜、模式往返重建），但它们同样是靠 `startDuel()` 钩子起局，**不等于两人各一台电脑真打一局**。生产检查验证页面能进入、WebGL 上下文可用、无开发入口、无控制台错误、资源无 HTTP 错误且无跨源第三方请求，并在优化构建里跑一遍对战面板的邀请码生成。故意禁用 WebGL 的错误分支测试会产生预期渲染错误。
 

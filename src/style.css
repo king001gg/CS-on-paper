@@ -245,6 +245,22 @@ kbd {
 }
 .mute-btn.is-off { background: #ded6c4; color: #7a7f7d; }
 
+/* 冷启动期间准备页的控件是 disabled 的（原因见 index.html 里的注释）。
+   要有明确的「还没准备好」外观，同时把 hover/active 的位移与变色一并压掉 ——
+   否则鼠标移上去还有按下反馈，比不做还误导。 */
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.loadout-card:disabled,
+.mute-btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+.btn-primary:disabled:hover,
+.btn-primary:disabled:active,
+.loadout-card:disabled:hover { transform: none; }
+.btn-primary:disabled:hover { box-shadow: 4px 5px 0 rgba(41, 51, 49, 0.38); }
+.btn-secondary:disabled:hover { background: var(--warm); }
+
 /* ---------------- HUD ---------------- */
 #hud { position: absolute; inset: 0; pointer-events: none; z-index: 15; }
 #hud .hud-topleft { position: absolute; top: 14px; left: 14px; min-width: 172px; }

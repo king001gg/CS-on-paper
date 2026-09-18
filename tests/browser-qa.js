@@ -147,6 +147,19 @@ async function waitFor(expr, timeoutMs = 25000, interval = 400) {
   }
 }
 
+// 等页面真正「可交互」再开始点。
+// 不能只 sleep 一个固定值：index.html 里准备页的控件是 disabled 的，
+// main.js 绑完事件才解禁；而 bundle 下载 + 贴图/关卡同步构建在冷启动时（线上 Pages
+// 叠加软渲染实测要 9 秒）远超本地。写死 3500ms 在本地够用，线上会点到尚未绑定的
+// 按钮上 —— 而且**不报错**，只是静静什么都不发生。
+async function waitForAppReady(timeoutMs = 45000) {
+  return waitFor(
+    '!!document.getElementById("btn-start") && document.getElementById("btn-start").disabled === false',
+    timeoutMs,
+    200
+  )
+}
+
 const results = []
 function check(name, ok, detail = '') {
   results.push({ name, ok, detail })
@@ -175,7 +188,7 @@ await send('Page.addScriptToEvaluateOnNewDocument', {
     })();`
 })
 await send('Page.navigate', { url: URL_ARG })
-await sleep(3500)
+await waitForAppReady()
 
 const title = await evaluate('document.title')
 check('页面加载并渲染标题', title === '纸上交锋 · PAPER STRIKE', title)
@@ -201,7 +214,7 @@ if (PROD) {
   // 而 #btn-net 在 #menu 里面 —— 隐藏元素的包围盒是零尺寸，
   // 合成点击会落到 (0,0)，点了等于没点，而且**不报错**。
   await send('Page.navigate', { url: URL_ARG })
-  await sleep(3000)
+  await waitForAppReady()
   await clickSelector('#btn-net')
   await sleep(600)
   check('生产构建能打开对战面板', (await evaluate('!document.getElementById("net").classList.contains("hidden")')) === true)

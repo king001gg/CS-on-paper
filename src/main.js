@@ -634,6 +634,15 @@ camera.position.copy(MENU_CAM.pos)
 camera.lookAt(MENU_CAM.look)
 camera.fov = MENU_FOV
 camera.updateProjectionMatrix()
+
+// 准备页的控件到这里才解禁。走到这一行时 ui.bind() 与上面的 #btn-net 都已绑好，
+// 点击一定有反应；在此之前它们一直是 index.html 里写死的 disabled 状态。
+// 冷启动时 bundle 下载 + 贴图/关卡同步构建要好几秒，用户等不到的话，
+// 看到的是灰着的按钮，而不是一个「点了没反应」的按钮。
+for (const el of document.querySelectorAll('#btn-start, #btn-net, #btn-mute-menu, .loadout-card')) {
+  el.disabled = false
+}
+
 ui.showScreen('menu')
 requestAnimationFrame(frame)
 
