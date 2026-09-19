@@ -414,6 +414,23 @@ try {
   check('连上后面板切到「已连接」那一步', await stepShown(a, 'linked') && await stepShown(b, 'linked'))
 
   if (linkedA && linkedB) {
+    // 用户实际踩到过的场景：第一次应用应战码成功后界面几秒没动静（正在打洞），
+    // 于是又点了一次「应用应战码」。那时 signalingState 已经回到 stable，
+    // 旧代码把浏览器的 `Called in wrong state: stable` 原样甩到了界面上。
+    // 两道防线都要有：按钮锁住，且万一还是调到了传输层，给的必须是人话。
+    check('应战码应用成功后「应用应战码」保持禁用，用户点不到第二次',
+      (await a.evaluate('document.getElementById("btn-apply-answer").disabled')) === true)
+
+    const reapply = await a.evaluate(`(async () => {
+      try {
+        await window.__PAPER_STRIKE__.netPanel.transport.acceptAnswer('v=0')
+        return { threw: false, message: '' }
+      } catch (e) { return { threw: true, message: e.message } }
+    })()`)
+    check('重复应用应战码时给的是人话，不是浏览器原始异常',
+      reapply.threw && !/RTCPeerConnection|setRemoteDescription|Failed to execute/.test(reapply.message),
+      reapply.message || '（没抛错，连接状态被改坏了）')
+
     await sleep(1500)   // 等一轮 RTT 刷新
     const info = await a.evaluate('document.getElementById("net-link-info").textContent')
     check('已连接页显示了身份、延迟与候选类型', /身份：/.test(info) && /延迟：/.test(info) && /候选：/.test(info), info)

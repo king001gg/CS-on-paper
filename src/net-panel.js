@@ -56,6 +56,8 @@ export function createNetPanel({ onStartDuel, onBack } = {}) {
   let rttTimer = null
   let offState = null
   let busy = false
+  /** 应战码是否已经成功应用过一次。成功后「应用应战码」要一直禁用，见 setBusy */
+  let answerApplied = false
 
   function setStep(step) {
     for (const s of el.steps) s.classList.toggle('hidden', s.dataset.step !== step)
@@ -72,7 +74,12 @@ export function createNetPanel({ onStartDuel, onBack } = {}) {
   /** 把按钮锁住，防止用户在异步过程中连点 —— 重复建 PeerConnection 会留下野连接 */
   function setBusy(on) {
     busy = on
-    for (const b of Object.values(btn)) if (b) b.disabled = on
+    for (const b of Object.values(btn)) {
+      if (!b) continue
+      // 「应用应战码」成功之后要一直禁用：打洞要好几秒，用户看界面没动静就会再点一次，
+      // 而那时 signalingState 已经回到 stable，第二次只会拿到一句浏览器原始异常。
+      b.disabled = on || (b === btn.applyAnswer && answerApplied)
+    }
     if (btn.back) btn.back.disabled = false    // 返回永远可用，卡住时用户得能退出来
   }
 
@@ -87,6 +94,8 @@ export function createNetPanel({ onStartDuel, onBack } = {}) {
     if (rttTimer) { clearInterval(rttTimer); rttTimer = null }
     if (offState) { offState(); offState = null }
     if (transport) { try { transport.close('面板关闭') } catch {} transport = null }
+    // 每次「重开一条连接」（open/close/选身份）都算重新开始，把成功标记一并清掉
+    answerApplied = false
   }
 
   function watch(t) {
@@ -186,7 +195,10 @@ export function createNetPanel({ onStartDuel, onBack } = {}) {
       setStatus('正在解析应战码…')
       const r = await acceptAnswerBlob(transport, text)
       if (r.error) { setStatus(r.error, 'error'); return }
-      setStatus('正在打洞，通常几秒内完成…')
+      // 只有**成功**才上锁。应战码有误时 setRemoteDescription 会拒绝而状态不变，
+      // 那种情况下用户必须还能改完再试一次。
+      answerApplied = true
+      setStatus('正在打洞，通常几秒内完成…如果一直连不上，请点「返回准备页」重新来一次。')
     } catch (err) {
       setStatus('应用应战码失败：' + err.message, 'error')
     } finally {

@@ -164,6 +164,18 @@ export class RtcTransport extends Transport {
 
   /** 接应战：双方描述齐了，开始打洞 */
   async acceptAnswer(sdp) {
+    // 只有「本地 offer 已经设好」的连接才吃得下 answer。
+    //
+    // 最容易踩到的路径是**重复应用**：第一次应用成功后 signalingState 回到 stable，
+    // 而打洞要几秒，用户看界面没动静就再点一次「应用应战码」——
+    // 那时 setRemoteDescription 会抛 `Called in wrong state: stable`，
+    // 浏览器原文直接甩到界面上，用户完全看不懂，也完全不知道下一步该做什么。
+    // 面板那边已经把按钮禁掉了，这里是第二道防线（键盘回车、将来的新调用点都会走到）。
+    if (this.pc.signalingState !== 'have-local-offer') {
+      throw new Error(this.pc.signalingState === 'stable'
+        ? '这段应战码已经应用过了。如果两端没能连上，请点「返回准备页」重新走一次流程。'
+        : '这条连接当前不接受应战码（状态：' + this.pc.signalingState + '）。请点「返回准备页」重新走一次流程。')
+    }
     await this.pc.setRemoteDescription({ type: 'answer', sdp })
     const max = this.pc.sctp && this.pc.sctp.maxMessageSize
     if (max) this._maxMessageSize = Math.min(max, FALLBACK_MAX_MESSAGE)
